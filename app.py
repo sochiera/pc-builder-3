@@ -77,6 +77,28 @@ PURPOSES = {
     "gaming": "Gaming",
     "programming": "Programowanie",
 }
+BALANCE_SCORES = {
+    "gaming": {
+        "cpu": 70,
+        "motherboard": 80,
+        "ram": 80,
+        "gpu": 95,
+        "disk": 80,
+        "psu": 80,
+        "cooling": 80,
+        "case": 80,
+    },
+    "programming": {
+        "cpu": 95,
+        "motherboard": 80,
+        "ram": 85,
+        "gpu": 45,
+        "disk": 80,
+        "psu": 80,
+        "cooling": 80,
+        "case": 80,
+    },
+}
 THREE_PART_DEPENDENCIES = {
     ("ryzen-5-7600", "b650", "fortis-5"):
         "wybrane chlodzenie nie jest zgodne z wymaganiami tego polaczenia procesora i plyty glownej",
@@ -110,6 +132,24 @@ def selected_component(selected_components: list[dict] | None, component_type: s
         (component for component in selected_components or [] if component.get("type") == component_type),
         None,
     )
+
+
+def balance_assessment(selected_components: list[dict], purpose: str) -> dict:
+    scores = BALANCE_SCORES[purpose]
+    weakest = min(
+        selected_components,
+        key=lambda component: scores.get(component.get("type"), 0),
+    )
+    weakest_type = weakest.get("type", "element")
+    weakest_model = weakest.get("model")
+    return {
+        "rating": scores.get(weakest_type, 0),
+        "weakest": weakest_model,
+        "explanation": (
+            f"{PURPOSES[purpose]}: najslabszym elementem jest {weakest_model}; "
+            f"ogranicza bilans zestawu dla celu {PURPOSES[purpose]}"
+        ),
+    }
 
 
 def analyse(
@@ -198,7 +238,7 @@ def analyse(
         status = "blocked"
     else:
         status = "compatible"
-    return {
+    result = {
         "cpu": cpu,
         "motherboard": motherboard,
         "total": total,
@@ -208,6 +248,9 @@ def analyse(
         "psu_power": psu_power,
         "purpose": purpose,
     }
+    if selected_components:
+        result["balance"] = balance_assessment(selected_components, purpose)
+    return result
 
 
 def import_products(payload: dict) -> dict:
@@ -357,7 +400,7 @@ PAGE = """<!doctype html>
   <header><h1>Buduj PC</h1><p class='lead'>Sprawdz kompatybilnosc zestawu na biezaco.</p></header>
   <main>
     <section id='selectors'></section>
-    <section class='summary' aria-live='polite'><label for='purpose'>Przeznaczenie zestawu</label><select id='purpose'><option value='gaming'>Gaming</option><option value='programming'>Programowanie</option></select><label for='budget'>Maksymalny budzet (PLN)</label><input id='budget' type='number' min='0' step='1' placeholder='Podaj budzet'><p id='budget-summary'></p><strong id='status'>Wybierz czesci...</strong><p id='total'></p><p id='power'></p><div id='issue'></div><ul id='build-products'></ul></section>
+    <section class='summary' aria-live='polite'><label for='purpose'>Przeznaczenie zestawu</label><select id='purpose'><option value='gaming'>Gaming</option><option value='programming'>Programowanie</option></select><label for='budget'>Maksymalny budzet (PLN)</label><input id='budget' type='number' min='0' step='1' placeholder='Podaj budzet'><p id='budget-summary'></p><strong id='status'>Wybierz czesci...</strong><p id='total'></p><p id='power'></p><p id='balance'></p><div id='issue'></div><ul id='build-products'></ul></section>
     <section class='summary'>
       <button id='import' type='button'>Importuj odpowiedz x-kom</button>
       <p id='import-status' aria-live='polite'></p>
@@ -455,6 +498,10 @@ PAGE = """<!doctype html>
         budgetSummary.textContent = '';
       }
       document.querySelector('#power').textContent = `Przeznaczenie: ${build.purpose} | Zapotrzebowanie: ${build.analysis.power_required} W | PSU: ${build.analysis.psu_power} W`;
+      const balance = document.querySelector('#balance');
+      balance.textContent = build.analysis.balance
+        ? `Bilans: ocena ${build.analysis.balance.rating}; najslabszy element ${build.analysis.balance.weakest}. ${build.analysis.balance.explanation}`
+        : '';
       const issueList = document.querySelector('#issue');
       issueList.replaceChildren();
        build.analysis.issues.forEach(issue => {

@@ -354,6 +354,58 @@ class BuilderSmokeTest(unittest.TestCase):
             "the refreshed analysis no longer reports the dependency as a blocker",
         )
 
+    def test_analysis_reports_purpose_specific_balance_and_weakest_component(self):
+        from app import analyse
+
+        selected_components = [
+            {"type": "cpu", "model": "core-i5-14600k"},
+            {"type": "motherboard", "model": "z790"},
+            {"type": "ram", "model": "ddr5-6000"},
+            {"type": "gpu", "model": "rtx-4070"},
+            {"type": "disk", "model": "nvme-1tb"},
+            {"type": "psu", "model": "psu-750"},
+            {"type": "cooling", "model": "compatible-cooling"},
+            {"type": "case", "model": "regnum-400"},
+        ]
+
+        expected_balance = {
+            "gaming": (70, "core-i5-14600k", "Gaming"),
+            "programming": (45, "rtx-4070", "Programowanie"),
+        }
+        assessments = {}
+        for purpose in ("gaming", "programming"):
+            with self.subTest(purpose=purpose):
+                result = analyse(
+                    "core-i5-14600k",
+                    "z790",
+                    "ddr5-6000",
+                    selected_components,
+                    purpose,
+                )
+                self.assertIn("balance", result, "analysis exposes one balance assessment")
+                balance = result.get("balance")
+                self.assertIsInstance(balance, dict, "balance assessment is structured")
+                expected_rating, expected_weakest, label = expected_balance[purpose]
+                self.assertEqual(balance.get("rating"), expected_rating, "balance exposes the current rating")
+                self.assertIn("weakest", balance, "balance assessment identifies its weakest component")
+                self.assertIn("explanation", balance, "balance assessment includes an explanation")
+                weakest = balance.get("weakest") if isinstance(balance, dict) else None
+                explanation = balance.get("explanation") if isinstance(balance, dict) else ""
+                self.assertEqual(weakest, expected_weakest, "balance identifies the purpose-specific weakest component")
+                self.assertIn(
+                    weakest,
+                    {component["model"] for component in selected_components},
+                    "balance identifies a weakest selected component",
+                )
+                self.assertIn(label, explanation, "balance explanation names the selected purpose")
+                assessments[purpose] = balance
+
+        self.assertNotEqual(
+            assessments["gaming"]["weakest"],
+            assessments["programming"]["weakest"],
+            "changing purpose refreshes the balance for the current goal",
+        )
+
     def test_import_reports_every_product_and_import_count(self):
         payload = {
             "products": [
@@ -1026,6 +1078,10 @@ class BuilderSmokeTest(unittest.TestCase):
             else:
                 self.fail("selected purpose does not render beside the build")
             self.assertIn("Przeznaczenie: programming", purpose_summary, "changed purpose remains visible with the build")
+            balance_summary = self.webdriver(
+                "POST", f"{base}/execute/sync", {"script": "return document.querySelector('#balance').textContent", "args": []}
+            )["value"]
+            self.assertIn("45", balance_summary, "visible balance exposes the current rating after purpose change")
             programming_responses = self.webdriver(
                 "POST", f"{base}/execute/sync", {"script": "return window.__buildResponses", "args": []}
             )["value"]
