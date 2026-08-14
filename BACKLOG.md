@@ -169,7 +169,7 @@ Jako kupujacy chce skopiowac zestaw do jednego wariantu i zmienic w nim czesc, z
 - Sprawdzenie: skopiuj przygotowany zestaw, zmien GPU w kopii i sprawdz, ze wariant bazowy pozostal bez zmian, a oba maja widoczne laczne ceny.
 - Poza zakresem: trzeci wariant, automatyczne generowanie i scalanie zmian.
 
-## US-020 — Uzytkownik zapisuje konfiguracje [do weryfikacji]
+## US-020 — Uzytkownik zapisuje konfiguracje [zrobiona]
 
 Jako kupujacy chce zapisac aktualny zestaw i ponownie go otworzyc, zeby nie utracic wykonanej pracy po zamknieciu aplikacji.
 
