@@ -53,6 +53,19 @@ COMPONENTS = {
     "case": CASES,
 }
 REQUIRED_TYPES = tuple(COMPONENTS)
+POWER_REQUIREMENTS = {
+    "ryzen-5-7600": 105,
+    "core-i5-14600k": 181,
+    "b650": 80,
+    "z790": 80,
+    "ddr5-6000": 50,
+    "ddr4-3200": 50,
+    "rtx-4070": 650,
+    "nvme-1tb": 10,
+    "fortis-5": 5,
+    "regnum-400": 0,
+}
+PSU_CAPACITIES = {"psu-750": 750}
 
 
 def component_type_for(model: str) -> str | None:
@@ -71,7 +84,12 @@ def ram_standard(ram_id: str | None) -> str | None:
     return standard if standard in {"DDR4", "DDR5"} else None
 
 
-def analyse(cpu_id: str, motherboard_id: str, ram_id: str | None = None) -> dict:
+def analyse(
+    cpu_id: str,
+    motherboard_id: str,
+    ram_id: str | None = None,
+    selected_components: list[dict] | None = None,
+) -> dict:
     """Return the build summary used by both the browser and the HTTP test."""
     cpu = CPUS[cpu_id]
     motherboard = MOTHERBOARDS[motherboard_id]
@@ -93,12 +111,27 @@ def analyse(cpu_id: str, motherboard_id: str, ram_id: str | None = None) -> dict
             "message": f"cpu {cpu_id} nie obsluguje RAM w standardzie {standard}.",
         })
     total = cpu["price"] + motherboard["price"]
+    components = selected_components or [
+        {"model": cpu_id},
+        {"model": motherboard_id},
+        {"model": ram_id},
+    ]
+    power_required = sum(POWER_REQUIREMENTS.get(component.get("model"), 0) for component in components)
+    psu = next((component for component in components if component.get("type") == "psu"), None)
+    psu_power = PSU_CAPACITIES.get(psu.get("model")) if psu else None
+    if psu_power is not None and power_required > psu_power:
+        issues.append({
+            "level": "blocker",
+            "message": f"Power: zestaw wymaga {power_required} W, a wybrany PSU zapewnia tylko {psu_power} W.",
+        })
     return {
         "cpu": cpu,
         "motherboard": motherboard,
         "total": total,
         "status": "blocked" if issues else "compatible",
         "issues": issues,
+        "power_required": power_required,
+        "psu_power": psu_power,
     }
 
 
@@ -194,7 +227,7 @@ def build_from_selections(selections: dict, catalog: list[dict]) -> dict:
     cpu = next(product for product in selected if product["type"] == "cpu")
     motherboard = next(product for product in selected if product["type"] == "motherboard")
     ram = next(product for product in selected if product["type"] == "ram")
-    analysis = analyse(cpu["model"], motherboard["model"], ram["model"])
+    analysis = analyse(cpu["model"], motherboard["model"], ram["model"], selected)
     total = sum(product["price"] for product in selected)
     analysis["total"] = total
     return {
@@ -226,7 +259,7 @@ PAGE = """<!doctype html>
   <header><h1>Buduj PC</h1><p class='lead'>Sprawdz kompatybilnosc zestawu na biezaco.</p></header>
   <main>
     <section id='selectors'></section>
-    <section class='summary' aria-live='polite'><strong id='status'>Wybierz czesci...</strong><p id='total'></p><p id='issue'></p><ul id='build-products'></ul></section>
+    <section class='summary' aria-live='polite'><strong id='status'>Wybierz czesci...</strong><p id='total'></p><p id='power'></p><p id='issue'></p><ul id='build-products'></ul></section>
     <section class='summary'>
       <button id='import' type='button'>Importuj odpowiedz x-kom</button>
       <p id='import-status' aria-live='polite'></p>
@@ -297,6 +330,7 @@ PAGE = """<!doctype html>
       status.textContent = build.analysis.status === 'compatible' ? 'Kompatybilny zestaw' : 'Konfiguracja zablokowana';
       status.className = build.analysis.status === 'compatible' ? 'ok' : 'blocked';
       document.querySelector('#total').textContent = `Suma: ${build.total} PLN`;
+      document.querySelector('#power').textContent = `Zapotrzebowanie: ${build.analysis.power_required} W | PSU: ${build.analysis.psu_power} W`;
       document.querySelector('#issue').textContent = build.analysis.issues.map(issue => issue.message).join(' ');
       const products = document.querySelector('#build-products');
       products.replaceChildren();

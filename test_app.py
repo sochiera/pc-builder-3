@@ -569,8 +569,72 @@ class BuilderSmokeTest(unittest.TestCase):
                     selected_total = sum(product["price"] for product in catalog["products"])
                     self.assertEqual(build["total"], selected_total, "set reports total price")
                     self.assertEqual(build["analysis"]["total"], selected_total, "analysis reports the complete set total")
-                    self.assertEqual(build["analysis"]["status"], "compatible", "set returns the current compatibility analysis")
-                    self.assertEqual(build["analysis"]["issues"], [], "compatible selections have no analysis issues")
+                    self.assertEqual(build["analysis"]["status"], "blocked", "insufficient PSU power blocks the complete set")
+                    self.assertGreater(build["analysis"]["power_required"], build["analysis"]["psu_power"])
+                    self.assertEqual(build["analysis"]["psu_power"], 750)
+                    self.assertTrue(build["analysis"]["issues"], "blocked selections report an analysis issue")
+        finally:
+            process.terminate()
+            process.wait(timeout=3)
+
+    def test_builder_blocks_a_set_that_exceeds_selected_psu_power(self):
+        payload = {
+            "products": [
+                {"id": "cpu-1", "model": "ryzen-5-7600", "name": "AMD Ryzen 5 7600", "price": 799},
+                {"id": "board-1", "model": "b650", "name": "MSI B650 Gaming Plus WiFi", "price": 699},
+                {"id": "ram-1", "model": "ddr5-6000", "name": "Kingston Fury DDR5 32 GB", "price": 499},
+                {"id": "gpu-1", "model": "rtx-4070", "name": "GeForce RTX 4070", "price": 2399},
+                {"id": "disk-1", "model": "nvme-1tb", "name": "Samsung 990 EVO 1 TB", "price": 399},
+                {"id": "psu-1", "model": "psu-750", "name": "be quiet! Pure Power 12 M 750W", "price": 449},
+                {"id": "cooler-1", "model": "fortis-5", "name": "Endorfy Fortis 5", "price": 199},
+                {"id": "case-1", "model": "regnum-400", "name": "Endorfy Regnum 400 ARGB", "price": 299},
+            ]
+        }
+        with socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            port = listener.getsockname()[1]
+        base_url = f"http://127.0.0.1:{port}"
+        process = subprocess.Popen([sys.executable, "app.py", "--port", str(port)], cwd=ROOT)
+        try:
+            import_request = Request(
+                f"{base_url}/api/import",
+                data=json.dumps(payload).encode(),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            for _ in range(20):
+                try:
+                    with urlopen(import_request) as response:
+                        self.assertEqual(response.status, 200)
+                    break
+                except OSError:
+                    time.sleep(0.1)
+            else:
+                self.fail("Application did not start")
+
+            with urlopen(f"{base_url}/api/catalog") as response:
+                catalog = json.load(response)
+            selections = {product["type"]: product["id"] for product in catalog["products"]}
+            build_request = Request(
+                f"{base_url}/api/build",
+                data=json.dumps({"selections": selections}).encode(),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urlopen(build_request) as response:
+                build = json.load(response)
+
+            analysis = build["analysis"]
+            self.assertEqual(analysis["status"], "blocked", "insufficient PSU power blocks the set")
+            self.assertGreater(analysis["power_required"], analysis["psu_power"], "reported requirement exceeds available PSU power")
+            self.assertEqual(analysis["psu_power"], 750, "analysis reports the selected PSU capacity")
+            power_issues = [
+                issue for issue in analysis["issues"]
+                if "power" in issue["message"].lower() or "moc" in issue["message"].lower()
+            ]
+            self.assertTrue(power_issues, "power blocker explains the requirement and available PSU power")
+            self.assertIn("900 W", power_issues[0]["message"])
+            self.assertIn("750 W", power_issues[0]["message"])
         finally:
             process.terminate()
             process.wait(timeout=3)
@@ -721,7 +785,8 @@ class BuilderSmokeTest(unittest.TestCase):
                 "POST", f"{base}/execute/sync", {"script": "return document.querySelector('.summary').textContent", "args": []}
             )["value"]
             self.assertIn("5742 PLN", page)
-            self.assertIn("Kompatybilny zestaw", page)
+            self.assertIn("Konfiguracja zablokowana", page)
+            self.assertIn("900 W | PSU: 750 W", page, "initial analysis renders the current power reserve")
             self.webdriver(
                 "POST", f"{base}/execute/sync",
                 {"script": "const ram = document.querySelector('#ram'); ram.value = 'ram-2'; ram.dispatchEvent(new Event('change', {bubbles: true}));", "args": []},
@@ -745,12 +810,13 @@ class BuilderSmokeTest(unittest.TestCase):
                 compatible_summary = self.webdriver(
                     "POST", f"{base}/execute/sync", {"script": "return document.querySelector('.summary').textContent", "args": []}
                 )["value"]
-                if "Kompatybilny zestaw" in compatible_summary:
+                if "Konfiguracja zablokowana" in compatible_summary and "DDR4" not in compatible_summary:
                     break
                 time.sleep(0.1)
             else:
-                self.fail("compatible RAM change does not clear the compatibility issue")
+                self.fail("compatible RAM change does not clear the RAM compatibility issue")
             self.assertNotIn("DDR4", compatible_summary, "compatible RAM does not leave a RAM conflict")
+            self.assertIn("900 W | PSU: 750 W", compatible_summary, "RAM refresh preserves the current power assessment")
             self.webdriver(
                 "POST", f"{base}/execute/sync",
                 {"script": "const cpu = document.querySelector('#cpu'); cpu.value = 'cpu-2'; cpu.dispatchEvent(new Event('change', {bubbles: true}));", "args": []},
@@ -781,6 +847,7 @@ class BuilderSmokeTest(unittest.TestCase):
             )["value"]
             self.assertIn("Konfiguracja zablokowana", blocked_summary, "incompatible CPU change blocks the build")
             self.assertIn("socketu", blocked_summary, "blocked build renders the compatibility issue")
+            self.assertIn("976 W | PSU: 750 W", blocked_summary, "changing the CPU refreshes the power assessment")
             self.webdriver(
                 "POST", f"{base}/execute/sync",
                 {"script": "const board = document.querySelector('#motherboard'); board.value = 'board-2'; board.dispatchEvent(new Event('change', {bubbles: true}));", "args": []},
@@ -812,8 +879,9 @@ class BuilderSmokeTest(unittest.TestCase):
                 "POST", f"{base}/execute/sync", {"script": "return document.querySelector('.summary').textContent", "args": []}
             )["value"]
             self.assertIn("6342 PLN", refreshed_summary, "refresh shows the total for the newly selected models")
-            self.assertIn("Kompatybilny zestaw", refreshed_summary, "refresh keeps the current analysis visible")
+            self.assertIn("Konfiguracja zablokowana", refreshed_summary, "refresh keeps the current analysis visible")
             self.assertNotIn("socketu", refreshed_summary, "compatible motherboard change clears the prior issue")
+            self.assertIn("976 W | PSU: 750 W", refreshed_summary, "motherboard refresh keeps the current power assessment")
         finally:
             if "session_id" in locals():
                 try:
