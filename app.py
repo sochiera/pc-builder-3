@@ -9,13 +9,13 @@ from urllib.parse import parse_qs, urlparse
 
 
 CPUS = {
-    "ryzen-5-7600": {"name": "AMD Ryzen 5 7600", "socket": "AM5", "price": 799},
-    "core-i5-14600k": {"name": "Intel Core i5-14600K", "socket": "LGA1700", "price": 1249},
+    "ryzen-5-7600": {"name": "AMD Ryzen 5 7600", "socket": "AM5", "ram_standards": ["DDR5"], "price": 799},
+    "core-i5-14600k": {"name": "Intel Core i5-14600K", "socket": "LGA1700", "ram_standards": ["DDR5"], "price": 1249},
 }
 
 MOTHERBOARDS = {
-    "b650": {"name": "MSI B650 Gaming Plus WiFi", "socket": "AM5", "price": 699},
-    "z790": {"name": "ASUS Prime Z790-P", "socket": "LGA1700", "price": 849},
+    "b650": {"name": "MSI B650 Gaming Plus WiFi", "socket": "AM5", "ram_standards": ["DDR5"], "price": 699},
+    "z790": {"name": "ASUS Prime Z790-P", "socket": "LGA1700", "ram_standards": ["DDR4", "DDR5"], "price": 849},
 }
 
 RAM = {
@@ -56,13 +56,22 @@ REQUIRED_TYPES = tuple(COMPONENTS)
 
 
 def component_type_for(model: str) -> str | None:
+    if isinstance(model, str) and model.lower().startswith(("ddr4-", "ddr5-")):
+        return "ram"
     return next(
         (component_type for component_type, components in COMPONENTS.items() if model in components),
         None,
     )
 
 
-def analyse(cpu_id: str, motherboard_id: str) -> dict:
+def ram_standard(ram_id: str | None) -> str | None:
+    if not ram_id:
+        return None
+    standard = ram_id.split("-", 1)[0].upper()
+    return standard if standard in {"DDR4", "DDR5"} else None
+
+
+def analyse(cpu_id: str, motherboard_id: str, ram_id: str | None = None) -> dict:
     """Return the build summary used by both the browser and the HTTP test."""
     cpu = CPUS[cpu_id]
     motherboard = MOTHERBOARDS[motherboard_id]
@@ -72,10 +81,22 @@ def analyse(cpu_id: str, motherboard_id: str) -> dict:
             "level": "blocker",
             "message": f"Procesor wymaga socketu {cpu['socket']}, a plyta ma {motherboard['socket']}.",
         })
+    standard = ram_standard(ram_id)
+    if standard and standard not in motherboard["ram_standards"]:
+        issues.append({
+            "level": "blocker",
+            "message": f"RAM w standardzie {standard} nie jest obslugiwany przez motherboard {motherboard_id}.",
+        })
+    if standard and standard not in cpu["ram_standards"]:
+        issues.append({
+            "level": "blocker",
+            "message": f"cpu {cpu_id} nie obsluguje RAM w standardzie {standard}.",
+        })
+    total = cpu["price"] + motherboard["price"]
     return {
         "cpu": cpu,
         "motherboard": motherboard,
-        "total": cpu["price"] + motherboard["price"],
+        "total": total,
         "status": "blocked" if issues else "compatible",
         "issues": issues,
     }
@@ -172,7 +193,8 @@ def build_from_selections(selections: dict, catalog: list[dict]) -> dict:
         selected.append(product)
     cpu = next(product for product in selected if product["type"] == "cpu")
     motherboard = next(product for product in selected if product["type"] == "motherboard")
-    analysis = analyse(cpu["model"], motherboard["model"])
+    ram = next(product for product in selected if product["type"] == "ram")
+    analysis = analyse(cpu["model"], motherboard["model"], ram["model"])
     total = sum(product["price"] for product in selected)
     analysis["total"] = total
     return {
@@ -343,7 +365,7 @@ class Handler(BaseHTTPRequestHandler):
         if request.path == "/api/analyse":
             query = parse_qs(request.query)
             try:
-                result = analyse(query["cpu"][0], query["motherboard"][0])
+                result = analyse(query["cpu"][0], query["motherboard"][0], query.get("ram", [None])[0])
             except (KeyError, IndexError):
                 self.respond(HTTPStatus.BAD_REQUEST, "application/json", b'{"error":"unknown component"}')
                 return

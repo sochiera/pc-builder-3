@@ -186,6 +186,41 @@ class BuilderSmokeTest(unittest.TestCase):
             process.terminate()
             process.wait(timeout=3)
 
+    def test_analysis_reports_ram_conflicts_with_motherboard_and_cpu(self):
+        with socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            port = listener.getsockname()[1]
+        base_url = f"http://127.0.0.1:{port}"
+        process = subprocess.Popen([sys.executable, "app.py", "--port", str(port)], cwd=ROOT)
+        try:
+            for _ in range(20):
+                try:
+                    with urlopen(f"{base_url}/", timeout=0.2):
+                        break
+                except OSError:
+                    time.sleep(0.1)
+            else:
+                self.fail("Application did not start")
+
+            cases = {
+                "motherboard": "cpu=ryzen-5-7600&motherboard=b650&ram=ddr4-3200",
+                "cpu": "cpu=core-i5-14600k&motherboard=z790&ram=ddr4-3200",
+            }
+            for conflict, query in cases.items():
+                with self.subTest(conflict=conflict):
+                    with urlopen(f"{base_url}/api/analyse?{query}") as response:
+                        result = json.load(response)
+                    self.assertEqual(result["status"], "blocked", f"DDR4 conflict blocks on {conflict}")
+                    self.assertTrue(result["issues"], f"DDR4 conflict with {conflict} has an issue")
+                    issue = result["issues"][0]
+                    self.assertEqual(issue["level"], "blocker", f"RAM conflict with {conflict} is a blocker")
+                    self.assertIn("RAM", issue["message"], "RAM conflict explains the involved memory")
+                    self.assertIn(conflict, issue["message"], f"RAM conflict identifies the {conflict}")
+                    self.assertIn("DDR4", issue["message"], "RAM conflict explains the unsupported standard")
+        finally:
+            process.terminate()
+            process.wait(timeout=3)
+
     def test_import_reports_every_product_and_import_count(self):
         payload = {
             "products": [
@@ -546,6 +581,7 @@ class BuilderSmokeTest(unittest.TestCase):
                 {"id": "cpu-1", "model": "ryzen-5-7600", "name": "AMD Ryzen 5 7600", "price": 799},
                 {"id": "board-1", "model": "b650", "name": "MSI B650 Gaming Plus WiFi", "price": 699},
                 {"id": "ram-1", "model": "ddr5-6000", "name": "Kingston Fury DDR5 32 GB", "price": 499},
+                {"id": "ram-2", "model": "ddr4-3200", "name": "Kingston Fury DDR4 32 GB", "price": 299},
                 {"id": "gpu-1", "model": "rtx-4070", "name": "GeForce RTX 4070", "price": 2399},
                 {"id": "disk-1", "model": "nvme-1tb", "name": "Samsung 990 EVO 1 TB", "price": 399},
                 {"id": "psu-1", "model": "psu-750", "name": "be quiet! Pure Power 12 M 750W", "price": 449},
@@ -623,7 +659,7 @@ class BuilderSmokeTest(unittest.TestCase):
             expected_option_counts = {
                 "cpu": 2,
                 "motherboard": 2,
-                "ram": 1,
+                "ram": 2,
                 "gpu": 1,
                 "disk": 1,
                 "psu": 1,
@@ -686,6 +722,35 @@ class BuilderSmokeTest(unittest.TestCase):
             )["value"]
             self.assertIn("5742 PLN", page)
             self.assertIn("Kompatybilny zestaw", page)
+            self.webdriver(
+                "POST", f"{base}/execute/sync",
+                {"script": "const ram = document.querySelector('#ram'); ram.value = 'ram-2'; ram.dispatchEvent(new Event('change', {bubbles: true}));", "args": []},
+            )
+            for _ in range(20):
+                ram_summary = self.webdriver(
+                    "POST", f"{base}/execute/sync", {"script": "return document.querySelector('.summary').textContent", "args": []}
+                )["value"]
+                if "Konfiguracja zablokowana" in ram_summary and "DDR4" in ram_summary:
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail("RAM change does not refresh the compatibility analysis")
+            self.assertIn("RAM", ram_summary, "RAM change renders the involved component")
+            self.assertIn("b650", ram_summary, "RAM change identifies the affected motherboard")
+            self.webdriver(
+                "POST", f"{base}/execute/sync",
+                {"script": "const ram = document.querySelector('#ram'); ram.value = 'ram-1'; ram.dispatchEvent(new Event('change', {bubbles: true}));", "args": []},
+            )
+            for _ in range(20):
+                compatible_summary = self.webdriver(
+                    "POST", f"{base}/execute/sync", {"script": "return document.querySelector('.summary').textContent", "args": []}
+                )["value"]
+                if "Kompatybilny zestaw" in compatible_summary:
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail("compatible RAM change does not clear the compatibility issue")
+            self.assertNotIn("DDR4", compatible_summary, "compatible RAM does not leave a RAM conflict")
             self.webdriver(
                 "POST", f"{base}/execute/sync",
                 {"script": "const cpu = document.querySelector('#cpu'); cpu.value = 'cpu-2'; cpu.dispatchEvent(new Event('change', {bubbles: true}));", "args": []},
