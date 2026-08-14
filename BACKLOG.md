@@ -1,4 +1,4 @@
-## US-001 — Operator odswieza katalog x-kom [nowa]
+## US-001 — Operator odswieza katalog x-kom [do weryfikacji]
 
 Jako operator katalogu chce pobrac komplet aktualnie dostepnych produktow z x-kom i zobaczyc wynik importu, zeby uzytkownicy pracowali na aktualnej ofercie.
 

@@ -38,6 +38,17 @@ def analyse(cpu_id: str, motherboard_id: str) -> dict:
     }
 
 
+def import_products(payload: dict) -> dict:
+    """Build the operator report for a prepared x-kom response."""
+    products = payload["products"]
+    if not isinstance(products, list):
+        raise ValueError("products must be a list")
+    for index, product in enumerate(products):
+        if not isinstance(product, dict) or "id" not in product or "name" not in product:
+            raise ValueError(f"product at index {index} must include id and name")
+    return {"products": products, "count": len(products)}
+
+
 PAGE = """<!doctype html>
 <html lang='pl'>
 <head>
@@ -52,6 +63,8 @@ PAGE = """<!doctype html>
     main { display: grid; gap: 1rem; } label, .summary { background: #1a2228; border-radius: .5rem; padding: 1rem; }
     select { display: block; width: 100%; margin-top: .5rem; padding: .65rem; border-radius: .3rem; }
     .summary { border: 1px solid #2d3a42; } .ok { color: #62e3a0; } .blocked { color: #ff8d7a; }
+    button { padding: .65rem 1rem; border: 0; border-radius: .3rem; cursor: pointer; }
+    #import-products { margin: .5rem 0 0; padding-left: 1.25rem; }
   </style>
 </head>
 <body>
@@ -66,10 +79,28 @@ PAGE = """<!doctype html>
       <option value='z790'>ASUS Prime Z790-P - 849 PLN</option>
     </select></label>
     <section class='summary' aria-live='polite'><strong id='status'>Analizowanie...</strong><p id='total'></p><p id='issue'></p></section>
+    <section class='summary'>
+      <button id='import' type='button'>Importuj odpowiedz x-kom</button>
+      <p id='import-status' aria-live='polite'></p>
+      <ul id='import-products'></ul>
+    </section>
   </main>
   <script>
     const cpu = document.querySelector('#cpu');
     const motherboard = document.querySelector('#motherboard');
+    const preparedResponse = { products: [
+      { id: 'cpu-1', name: 'AMD Ryzen 5 7600' },
+      { id: 'board-1', name: 'MSI B650 Gaming Plus WiFi' }
+    ] };
+    function renderImportedProducts(products) {
+      const list = document.querySelector('#import-products');
+      list.replaceChildren();
+      products.forEach(product => {
+        const item = document.createElement('li');
+        item.textContent = `${product.name} (${product.id})`;
+        list.append(item);
+      });
+    }
     async function refresh() {
       const response = await fetch(`/api/analyse?cpu=${cpu.value}&motherboard=${motherboard.value}`);
       const build = await response.json();
@@ -79,6 +110,25 @@ PAGE = """<!doctype html>
       document.querySelector('#total').textContent = `Suma: ${build.total} PLN`;
       document.querySelector('#issue').textContent = build.issues.map(issue => issue.message).join(' ');
     }
+    async function importCatalog() {
+      const status = document.querySelector('#import-status');
+      status.textContent = 'Importowanie...';
+      renderImportedProducts([]);
+      try {
+        const response = await fetch('/api/import', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(preparedResponse)
+        });
+        const report = await response.json();
+        if (!response.ok) throw new Error(report.error || 'Import nie powiodl sie');
+        status.textContent = `Zaimportowano: ${report.count}`;
+        renderImportedProducts(report.products);
+      } catch (error) {
+        status.textContent = `Blad importu: ${error.message}`;
+      }
+    }
+    document.querySelector('#import').addEventListener('click', importCatalog);
     cpu.addEventListener('change', refresh); motherboard.addEventListener('change', refresh); refresh();
   </script>
 </body>
@@ -101,6 +151,21 @@ class Handler(BaseHTTPRequestHandler):
             self.respond(HTTPStatus.OK, "application/json", json.dumps(result).encode())
             return
         self.respond(HTTPStatus.NOT_FOUND, "text/plain", b"Not found")
+
+    def do_POST(self):
+        request = urlparse(self.path)
+        if request.path != "/api/import":
+            self.respond(HTTPStatus.NOT_FOUND, "text/plain", b"Not found")
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            payload = json.loads(self.rfile.read(length))
+            report = import_products(payload)
+        except (ValueError, TypeError, KeyError, json.JSONDecodeError) as error:
+            body = json.dumps({"error": str(error)}).encode()
+            self.respond(HTTPStatus.BAD_REQUEST, "application/json", body)
+            return
+        self.respond(HTTPStatus.OK, "application/json", json.dumps(report).encode())
 
     def respond(self, status, content_type, body):
         self.send_response(status)
