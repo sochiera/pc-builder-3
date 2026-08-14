@@ -97,7 +97,7 @@ Jako kupujacy chce wybrac jedno zastosowanie komputera, zeby oceny zestawu odnos
 - Sprawdzenie: wybierz przygotowane zastosowanie i sprawdz, ze jest widoczne przy zestawie oraz uwzglednione w jego ocenie.
 - Poza zakresem: laczenie zastosowan, wlasne profile i szczegolowe wymagania programow.
 
-## US-012 — Uzytkownik pilnuje budzetu [do weryfikacji]
+## US-012 — Uzytkownik pilnuje budzetu [zrobiona]
 
 Jako kupujacy chce podac maksymalny budzet i zobaczyc, ile zostalo albo o ile zestaw go przekracza, zeby kontrolowac koszt podczas zmian.
 
