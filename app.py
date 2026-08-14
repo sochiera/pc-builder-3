@@ -160,11 +160,47 @@ def validate_budget(budget: int | float) -> int | float:
     return budget
 
 
+def validate_catalog_snapshot(snapshot: object) -> None:
+    if not isinstance(snapshot, dict):
+        raise ValueError("saved catalog snapshot is invalid")
+    products = snapshot.get("products")
+    options = snapshot.get("options")
+    if not isinstance(products, list) or not isinstance(options, list):
+        raise ValueError("saved catalog snapshot is invalid")
+    for item in products + options:
+        if (
+            not isinstance(item, dict)
+            or not all(isinstance(item.get(field), str) and item[field] for field in ("id", "type", "model", "name"))
+            or item.get("type") not in REQUIRED_TYPES
+            or isinstance(item.get("price"), bool)
+            or not isinstance(item.get("price"), (int, float))
+            or not math.isfinite(item["price"])
+        ):
+            raise ValueError("saved catalog snapshot contains an invalid item")
+
+
 def load_saves() -> dict:
     if not SAVES_PATH.exists():
         return {}
     with SAVES_PATH.open(encoding="utf-8") as handle:
-        return json.load(handle)
+        saves = json.load(handle)
+    if not isinstance(saves, dict):
+        raise ValueError("save registry is invalid")
+    for saved in saves.values():
+        if not isinstance(saved, dict):
+            raise ValueError("save registry contains an invalid entry")
+        selections = saved.get("selections")
+        if not isinstance(selections, dict) or set(selections) != set(REQUIRED_TYPES):
+            raise ValueError("save registry contains invalid selections")
+        if any(not isinstance(value, str) or not value for value in selections.values()):
+            raise ValueError("save registry contains invalid selections")
+        validate_purpose(saved.get("purpose"))
+        validate_budget(saved.get("budget"))
+        try:
+            validate_catalog_snapshot(saved.get("catalog"))
+        except ValueError as error:
+            raise ValueError(f"save registry contains an invalid catalog snapshot: {error}") from error
+    return saves
 
 
 def persist_saves(saves: dict) -> None:
@@ -1210,23 +1246,17 @@ BUILD_CATALOG = []
 
 
 def restore_catalog_snapshot(snapshot: dict | None) -> None:
-    if not isinstance(snapshot, dict):
-        raise ValueError("saved catalog snapshot is missing")
-    products = snapshot.get("products")
-    options = snapshot.get("options")
-    if not isinstance(products, list) or not isinstance(options, list):
-        raise ValueError("saved catalog snapshot is invalid")
+    validate_catalog_snapshot(snapshot)
+    products = snapshot["products"]
+    options = snapshot["options"]
     IMPORTED_CATALOG[:] = products
     BUILD_CATALOG[:] = options
 
 
 def merge_selected_catalog_snapshot(snapshot: dict | None, selections: dict) -> None:
-    if not isinstance(snapshot, dict):
-        raise ValueError("saved catalog snapshot is missing")
-    products = snapshot.get("products")
-    options = snapshot.get("options")
-    if not isinstance(products, list) or not isinstance(options, list):
-        raise ValueError("saved catalog snapshot is invalid")
+    validate_catalog_snapshot(snapshot)
+    products = snapshot["products"]
+    options = snapshot["options"]
 
     saved_options = {option.get("id"): option for option in options}
     selected_options = {}
@@ -1274,8 +1304,7 @@ def load_current_catalog() -> None:
     if not SAVES_PATH.exists():
         return
     try:
-        with SAVES_PATH.open(encoding="utf-8") as handle:
-            saves = json.load(handle)
+        saves = load_saves()
         latest_save = next(reversed(saves.values()), None)
         snapshot = latest_save.get("catalog") if isinstance(latest_save, dict) else None
         if not isinstance(snapshot, dict):

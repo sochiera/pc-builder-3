@@ -2516,6 +2516,7 @@ class BuilderSmokeTest(unittest.TestCase):
                     time.sleep(0.1)
             process.terminate()
             process.wait(timeout=3)
+
             self.fail("application did not start")
 
         with socket() as listener:
@@ -2709,6 +2710,88 @@ class BuilderSmokeTest(unittest.TestCase):
                 driver_process.wait(timeout=3)
             process.terminate()
             process.wait(timeout=3)
+
+    def test_corrupt_save_registry_returns_api_error_without_changing_current_build(self):
+        selections = {component_type: f"{component_type}-1" for component_type in (
+            "cpu", "motherboard", "ram", "gpu", "disk", "psu", "cooling", "case"
+        )}
+        payload = {"selections": selections, "purpose": "gaming", "budget": 6000}
+        registry = ROOT / ".pc-builder-saves.json"
+        previous_registry = registry.read_bytes() if registry.exists() else None
+
+        def request(port, path, body):
+            request = Request(
+                f"http://127.0.0.1:{port}{path}",
+                data=json.dumps(body).encode(),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            try:
+                with urlopen(request) as response:
+                    return response.status, json.load(response)
+            except HTTPError as error:
+                with error:
+                    return error.code, json.load(error)
+            except OSError:
+                return 599, {}
+
+        with socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            port = listener.getsockname()[1]
+        process = subprocess.Popen([sys.executable, "app.py", "--port", str(port)], cwd=ROOT)
+        try:
+            for _ in range(20):
+                try:
+                    with urlopen(f"http://127.0.0.1:{port}/", timeout=0.2):
+                        break
+                except OSError:
+                    time.sleep(0.1)
+            else:
+                self.fail("application did not start")
+
+            products = [
+                {"id": "cpu-offer", "model": "ryzen-5-7600", "name": "AMD Ryzen 5 7600", "price": 799},
+                {"id": "board-offer", "model": "b650", "name": "MSI B650 Gaming Plus WiFi", "price": 699},
+                {"id": "ram-offer", "model": "ddr5-6000", "name": "Kingston Fury DDR5 32 GB", "price": 499},
+                {"id": "gpu-offer", "model": "rtx-4070", "name": "GeForce RTX 4070", "price": 2399},
+                {"id": "disk-offer", "model": "nvme-1tb", "name": "Samsung 990 EVO 1 TB", "price": 399},
+                {"id": "psu-offer", "model": "psu-750", "name": "be quiet! Pure Power 12 M 750W", "price": 449},
+                {"id": "cooler-offer", "model": "fortis-5", "name": "Endorfy Fortis 5", "price": 199},
+                {"id": "case-offer", "model": "regnum-400", "name": "Endorfy Regnum 400 ARGB", "price": 299},
+            ]
+            import_status, _ = request(port, "/api/import", {"products": products})
+            self.assertEqual(import_status, 200, "prepared catalog is available before registry corruption")
+            build_status, before_build = request(port, "/api/build", payload)
+            self.assertEqual(build_status, 200, "current build is available before registry corruption")
+            with urlopen(f"http://127.0.0.1:{port}/api/catalog") as response:
+                before_catalog = json.load(response)
+
+            malformed_registry = {
+                "broken": {
+                    "selections": selections,
+                    "purpose": "gaming",
+                    "budget": 6000,
+                    "catalog": {"products": [{}], "options": [{}]},
+                }
+            }
+            for path, body in (("/api/save", payload), ("/api/open", {"save_id": "broken"})):
+                with self.subTest(path=path):
+                    registry.write_text(json.dumps(malformed_registry), encoding="utf-8")
+                    status, report = request(port, path, body)
+                    self.assertEqual(status, 400, "corrupt save registry returns a controlled API error")
+                    self.assertIsInstance(report.get("error"), str, "controlled error includes a buyer-readable message")
+                    with urlopen(f"http://127.0.0.1:{port}/api/catalog") as response:
+                        self.assertEqual(json.load(response), before_catalog, "failed registry access preserves the catalog")
+                    after_status, after_build = request(port, "/api/build", payload)
+                    self.assertEqual(after_status, 200, "failed registry access preserves the current build")
+                    self.assertEqual(after_build, before_build, "failed registry access does not change the build summary")
+        finally:
+            process.terminate()
+            process.wait(timeout=3)
+            if previous_registry is None:
+                registry.unlink(missing_ok=True)
+            else:
+                registry.write_bytes(previous_registry)
 
 
 if __name__ == "__main__":
