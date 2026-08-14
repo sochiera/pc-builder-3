@@ -18,10 +18,41 @@ MOTHERBOARDS = {
     "z790": {"name": "ASUS Prime Z790-P", "socket": "LGA1700", "price": 849},
 }
 
+RAM = {
+    "ddr5-6000": {"name": "Kingston Fury DDR5 32 GB", "price": 499},
+}
+
+GPUS = {
+    "rtx-4070": {"name": "GeForce RTX 4070", "price": 2399},
+}
+
+DISKS = {
+    "nvme-1tb": {"name": "Samsung 990 EVO 1 TB", "price": 399},
+}
+
+PSUS = {
+    "psu-750": {"name": "be quiet! Pure Power 12 M 750W", "price": 449},
+}
+
+COOLING = {
+    "fortis-5": {"name": "Endorfy Fortis 5", "price": 199},
+}
+
+CASES = {
+    "regnum-400": {"name": "Endorfy Regnum 400 ARGB", "price": 299},
+}
+
 COMPONENTS = {
     "cpu": CPUS,
     "motherboard": MOTHERBOARDS,
+    "ram": RAM,
+    "gpu": GPUS,
+    "disk": DISKS,
+    "psu": PSUS,
+    "cooling": COOLING,
+    "case": CASES,
 }
+REQUIRED_TYPES = tuple(COMPONENTS)
 
 
 def component_type_for(model: str) -> str | None:
@@ -94,13 +125,61 @@ def catalog_products(products: list[dict]) -> list[dict]:
         if not priced_offers or component_type is None:
             continue
         catalog.append({
-            "id": product["id"],
+            "id": priced_offers[-1]["id"],
             "type": component_type,
             "model": product["id"],
             "name": product["name"],
             "price": priced_offers[-1]["price"],
         })
     return catalog
+
+
+def catalog_options(catalog: list[dict]) -> list[dict]:
+    """Add known models to buyer options without changing the imported catalog."""
+    options = list(catalog)
+    for component_type, components in COMPONENTS.items():
+        existing = [product for product in catalog if product["type"] == component_type]
+        if not existing:
+            continue
+        id_prefix = existing[0]["id"].rsplit("-", 1)[0]
+        known_models = {product["model"] for product in existing}
+        next_index = len(existing) + 1
+        for model, details in components.items():
+            if model in known_models:
+                continue
+            options.append({
+                "id": f"{id_prefix}-{next_index}",
+                "type": component_type,
+                "model": model,
+                "name": details["name"],
+                "price": details["price"],
+            })
+            next_index += 1
+    return options
+
+
+def build_from_selections(selections: dict, catalog: list[dict]) -> dict:
+    if not isinstance(selections, dict):
+        raise ValueError("selections must be an object")
+    by_id = {product["id"]: product for product in catalog}
+    if set(selections) != set(REQUIRED_TYPES):
+        raise ValueError("one selection is required for each component type")
+    selected = []
+    for component_type in REQUIRED_TYPES:
+        product = by_id.get(selections[component_type])
+        if product is None or product["type"] != component_type:
+            raise ValueError(f"unknown {component_type} selection")
+        selected.append(product)
+    cpu = next(product for product in selected if product["type"] == "cpu")
+    motherboard = next(product for product in selected if product["type"] == "motherboard")
+    analysis = analyse(cpu["model"], motherboard["model"])
+    total = sum(product["price"] for product in selected)
+    analysis["total"] = total
+    return {
+        "products": [product["id"] for product in selected],
+        "total": total,
+        "analysis": analysis,
+    }
 
 
 PAGE = """<!doctype html>
@@ -124,15 +203,8 @@ PAGE = """<!doctype html>
 <body>
   <header><h1>Buduj PC</h1><p class='lead'>Sprawdz kompatybilnosc zestawu na biezaco.</p></header>
   <main>
-    <label>Procesor<select id='cpu'>
-      <option value='ryzen-5-7600'>AMD Ryzen 5 7600 - 799 PLN</option>
-      <option value='core-i5-14600k'>Intel Core i5-14600K - 1249 PLN</option>
-    </select></label>
-    <label>Plyta glowna<select id='motherboard'>
-      <option value='b650'>MSI B650 Gaming Plus WiFi - 699 PLN</option>
-      <option value='z790'>ASUS Prime Z790-P - 849 PLN</option>
-    </select></label>
-    <section class='summary' aria-live='polite'><strong id='status'>Analizowanie...</strong><p id='total'></p><p id='issue'></p></section>
+    <section id='selectors'></section>
+    <section class='summary' aria-live='polite'><strong id='status'>Wybierz czesci...</strong><p id='total'></p><p id='issue'></p><ul id='build-products'></ul></section>
     <section class='summary'>
       <button id='import' type='button'>Importuj odpowiedz x-kom</button>
       <p id='import-status' aria-live='polite'></p>
@@ -144,8 +216,10 @@ PAGE = """<!doctype html>
     </section>
   </main>
   <script>
-    const cpu = document.querySelector('#cpu');
-    const motherboard = document.querySelector('#motherboard');
+    const requiredTypes = ['cpu', 'motherboard', 'ram', 'gpu', 'disk', 'psu', 'cooling', 'case'];
+    const typeNames = { cpu: 'Procesor', motherboard: 'Plyta glowna', ram: 'Pamiec RAM', gpu: 'Karta graficzna', disk: 'Dysk', psu: 'Zasilacz', cooling: 'Chlodzenie', case: 'Obudowa' };
+    let catalog = [];
+    let buildCatalog = [];
     const preparedResponse = { products: [
       { id: 'offer-1', model: 'ryzen-5-7600', name: 'AMD Ryzen 5 7600 BOX', price: 799, source: 'x-kom' },
       { id: 'offer-2', model: 'ryzen-5-7600', name: 'AMD 7600 3.8 GHz', price: 829, source: 'prepared-shop' }
@@ -168,14 +242,48 @@ PAGE = """<!doctype html>
         list.append(item);
       });
     }
-    async function refresh() {
-      const response = await fetch(`/api/analyse?cpu=${cpu.value}&motherboard=${motherboard.value}`);
+    function renderSelectors(products) {
+      const container = document.querySelector('#selectors');
+      container.replaceChildren();
+      requiredTypes.forEach(type => {
+        const options = buildCatalog.filter(item => item.type === type);
+        const label = document.createElement('label');
+        label.textContent = typeNames[type];
+        const select = document.createElement('select');
+        select.id = type;
+        options.forEach(product => {
+          const option = document.createElement('option');
+          option.value = product.id;
+          option.textContent = `${product.name} - ${product.price} PLN`;
+          select.append(option);
+        });
+        select.addEventListener('change', refreshBuild);
+        label.append(select);
+        container.append(label);
+      });
+    }
+    async function refreshBuild() {
+      const selections = Object.fromEntries(requiredTypes.map(type => [type, document.querySelector(`#${type}`).value]));
+      if (Object.values(selections).some(value => !value)) return;
+      const response = await fetch('/api/build', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ selections })
+      });
       const build = await response.json();
       const status = document.querySelector('#status');
-      status.textContent = build.status === 'compatible' ? 'Kompatybilny zestaw' : 'Konfiguracja zablokowana';
-      status.className = build.status === 'compatible' ? 'ok' : 'blocked';
+      status.textContent = build.analysis.status === 'compatible' ? 'Kompatybilny zestaw' : 'Konfiguracja zablokowana';
+      status.className = build.analysis.status === 'compatible' ? 'ok' : 'blocked';
       document.querySelector('#total').textContent = `Suma: ${build.total} PLN`;
-      document.querySelector('#issue').textContent = build.issues.map(issue => issue.message).join(' ');
+      document.querySelector('#issue').textContent = build.analysis.issues.map(issue => issue.message).join(' ');
+      const products = document.querySelector('#build-products');
+      products.replaceChildren();
+      build.products.forEach(id => {
+        const product = buildCatalog.find(item => item.id === id);
+        const item = document.createElement('li');
+        item.textContent = product ? product.name : id;
+        products.append(item);
+      });
     }
     async function importCatalog() {
       const status = document.querySelector('#import-status');
@@ -207,18 +315,23 @@ PAGE = """<!doctype html>
     }
     async function refreshCatalog() {
       const response = await fetch('/api/catalog');
-      const catalog = await response.json();
-      if (!response.ok) throw new Error(catalog.error || 'Nie mozna otworzyc katalogu');
-      renderCatalog(catalog.products);
+      const report = await response.json();
+      if (!response.ok) throw new Error(report.error || 'Nie mozna otworzyc katalogu');
+        catalog = report.products;
+        buildCatalog = report.options;
+        renderCatalog(catalog);
+        renderSelectors(buildCatalog);
+      await refreshBuild();
     }
     document.querySelector('#import').addEventListener('click', importCatalog);
-    cpu.addEventListener('change', refresh); motherboard.addEventListener('change', refresh); refresh();
+    refreshCatalog();
   </script>
 </body>
 </html>"""
 
 
 IMPORTED_CATALOG = []
+BUILD_CATALOG = []
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -237,20 +350,29 @@ class Handler(BaseHTTPRequestHandler):
             self.respond(HTTPStatus.OK, "application/json", json.dumps(result).encode())
             return
         if request.path == "/api/catalog":
-            self.respond(HTTPStatus.OK, "application/json", json.dumps({"products": IMPORTED_CATALOG}).encode())
+            self.respond(
+                HTTPStatus.OK,
+                "application/json",
+                json.dumps({"products": IMPORTED_CATALOG, "options": BUILD_CATALOG}).encode(),
+            )
             return
         self.respond(HTTPStatus.NOT_FOUND, "text/plain", b"Not found")
 
     def do_POST(self):
         request = urlparse(self.path)
-        if request.path != "/api/import":
+        if request.path not in ("/api/import", "/api/build"):
             self.respond(HTTPStatus.NOT_FOUND, "text/plain", b"Not found")
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
             payload = json.loads(self.rfile.read(length))
+            if request.path == "/api/build":
+                result = build_from_selections(payload.get("selections"), BUILD_CATALOG)
+                self.respond(HTTPStatus.OK, "application/json", json.dumps(result).encode())
+                return
             report = import_products(payload)
             IMPORTED_CATALOG[:] = catalog_products(report["products"])
+            BUILD_CATALOG[:] = catalog_options(IMPORTED_CATALOG)
         except (ValueError, TypeError, KeyError, json.JSONDecodeError) as error:
             body = json.dumps({"error": str(error)}).encode()
             self.respond(HTTPStatus.BAD_REQUEST, "application/json", body)

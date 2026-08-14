@@ -408,6 +408,358 @@ class BuilderSmokeTest(unittest.TestCase):
             process.terminate()
             process.wait(timeout=3)
 
+    def test_catalog_preserves_multiple_imported_variants_of_each_type(self):
+        payload = {
+            "products": [
+                {"id": "cpu-1", "model": "ryzen-5-7600", "name": "AMD Ryzen 5 7600", "price": 799},
+                {"id": "cpu-2", "model": "core-i5-14600k", "name": "Intel Core i5-14600K", "price": 1249},
+                {"id": "board-1", "model": "b650", "name": "MSI B650 Gaming Plus WiFi", "price": 699},
+                {"id": "board-2", "model": "z790", "name": "ASUS Prime Z790-P", "price": 849},
+                {"id": "ram-1", "model": "ddr5-6000", "name": "Kingston Fury DDR5 32 GB", "price": 499},
+                {"id": "gpu-1", "model": "rtx-4070", "name": "GeForce RTX 4070", "price": 2399},
+                {"id": "disk-1", "model": "nvme-1tb", "name": "Samsung 990 EVO 1 TB", "price": 399},
+                {"id": "psu-1", "model": "psu-750", "name": "be quiet! Pure Power 12 M 750W", "price": 449},
+                {"id": "cooler-1", "model": "fortis-5", "name": "Endorfy Fortis 5", "price": 199},
+                {"id": "case-1", "model": "regnum-400", "name": "Endorfy Regnum 400 ARGB", "price": 299},
+            ]
+        }
+        with socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            port = listener.getsockname()[1]
+        base_url = f"http://127.0.0.1:{port}"
+        process = subprocess.Popen([sys.executable, "app.py", "--port", str(port)], cwd=ROOT)
+        try:
+            for _ in range(20):
+                try:
+                    with urlopen(base_url):
+                        break
+                except OSError:
+                    time.sleep(0.1)
+            else:
+                self.fail("Application did not start")
+            request = Request(
+                f"{base_url}/api/import",
+                data=json.dumps(payload).encode(),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urlopen(request) as response:
+                self.assertEqual(response.status, 200)
+            with urlopen(f"{base_url}/api/catalog") as response:
+                catalog = json.load(response)
+            self.assertEqual(len(catalog["products"]), 10, "catalog keeps every recognized imported variant")
+            self.assertEqual(
+                {product["model"] for product in catalog["products"] if product["type"] == "cpu"},
+                {"ryzen-5-7600", "core-i5-14600k"},
+            )
+            self.assertEqual(
+                {product["model"] for product in catalog["products"] if product["type"] == "motherboard"},
+                {"b650", "z790"},
+            )
+            self.assertEqual(len(catalog["options"]), 10, "builder options reflect imported variants")
+        finally:
+            process.terminate()
+            process.wait(timeout=3)
+
+    def test_builder_accepts_one_catalog_part_of_each_required_type_as_one_set(self):
+        payload = {
+            "products": [
+                {"id": "cpu-1", "model": "ryzen-5-7600", "name": "AMD Ryzen 5 7600", "price": 799},
+                {"id": "board-1", "model": "b650", "name": "MSI B650 Gaming Plus WiFi", "price": 699},
+                {"id": "ram-1", "model": "ddr5-6000", "name": "Kingston Fury DDR5 32 GB", "price": 499},
+                {"id": "gpu-1", "model": "rtx-4070", "name": "GeForce RTX 4070", "price": 2399},
+                {"id": "disk-1", "model": "nvme-1tb", "name": "Samsung 990 EVO 1 TB", "price": 399},
+                {"id": "psu-1", "model": "psu-750", "name": "be quiet! Pure Power 12 M 750W", "price": 449},
+                {"id": "cooler-1", "model": "fortis-5", "name": "Endorfy Fortis 5", "price": 199},
+                {"id": "case-1", "model": "regnum-400", "name": "Endorfy Regnum 400 ARGB", "price": 299},
+            ]
+        }
+        with socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            port = listener.getsockname()[1]
+        base_url = f"http://127.0.0.1:{port}"
+        process = subprocess.Popen([sys.executable, "app.py", "--port", str(port)], cwd=ROOT)
+        try:
+            for _ in range(20):
+                try:
+                    with urlopen(f"{base_url}/", timeout=0.2):
+                        break
+                except OSError:
+                    time.sleep(0.1)
+            else:
+                self.fail("Application did not start")
+
+            import_request = Request(
+                f"{base_url}/api/import",
+                data=json.dumps(payload).encode(),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urlopen(import_request) as response:
+                self.assertEqual(response.status, 200)
+
+            with urlopen(f"{base_url}/api/catalog") as response:
+                catalog = json.load(response)
+            with self.subTest("catalog contains all required types"):
+                self.assertEqual(len(catalog["products"]), 8, "catalog contains one imported part of each required type")
+                self.assertEqual(
+                    len({product["id"] for product in catalog["products"]}),
+                    8,
+                    "catalog does not duplicate an imported part",
+                )
+                self.assertEqual(
+                    {product["type"] for product in catalog["products"]},
+                    {"cpu", "motherboard", "ram", "gpu", "disk", "psu", "cooling", "case"},
+                    "catalog provides each required component type",
+                )
+
+            selections = {product["type"]: product["id"] for product in catalog["products"]}
+            build_request = Request(
+                f"{base_url}/api/build",
+                data=json.dumps({"selections": selections}).encode(),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            try:
+                with urlopen(build_request) as response:
+                    build_status = response.status
+                    build = json.load(response)
+            except HTTPError as error:
+                build_status = error.code
+                build = {}
+            with self.subTest("builder returns one complete set"):
+                self.assertEqual(build_status, 200, "builder accepts one selection for every required type")
+                if build_status == 200:
+                    self.assertEqual(set(build["products"]), set(selections.values()), "one set contains all selected parts")
+                    selected_total = sum(product["price"] for product in catalog["products"])
+                    self.assertEqual(build["total"], selected_total, "set reports total price")
+                    self.assertEqual(build["analysis"]["total"], selected_total, "analysis reports the complete set total")
+                    self.assertEqual(build["analysis"]["status"], "compatible", "set returns the current compatibility analysis")
+                    self.assertEqual(build["analysis"]["issues"], [], "compatible selections have no analysis issues")
+        finally:
+            process.terminate()
+            process.wait(timeout=3)
+
+    def test_builder_view_selects_all_parts_and_refreshes_complete_set(self):
+        payload = {
+            "products": [
+                {"id": "cpu-1", "model": "ryzen-5-7600", "name": "AMD Ryzen 5 7600", "price": 799},
+                {"id": "board-1", "model": "b650", "name": "MSI B650 Gaming Plus WiFi", "price": 699},
+                {"id": "ram-1", "model": "ddr5-6000", "name": "Kingston Fury DDR5 32 GB", "price": 499},
+                {"id": "gpu-1", "model": "rtx-4070", "name": "GeForce RTX 4070", "price": 2399},
+                {"id": "disk-1", "model": "nvme-1tb", "name": "Samsung 990 EVO 1 TB", "price": 399},
+                {"id": "psu-1", "model": "psu-750", "name": "be quiet! Pure Power 12 M 750W", "price": 449},
+                {"id": "cooler-1", "model": "fortis-5", "name": "Endorfy Fortis 5", "price": 199},
+                {"id": "case-1", "model": "regnum-400", "name": "Endorfy Regnum 400 ARGB", "price": 299},
+            ]
+        }
+        with socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            app_port = listener.getsockname()[1]
+        with socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            self.webdriver_port = listener.getsockname()[1]
+        app_process = subprocess.Popen([sys.executable, "app.py", "--port", str(app_port)], cwd=ROOT)
+        driver_process = subprocess.Popen(
+            ["geckodriver", "--port", str(self.webdriver_port)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            import_request = Request(
+                f"http://127.0.0.1:{app_port}/api/import",
+                data=json.dumps(payload).encode(),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            for _ in range(20):
+                try:
+                    with urlopen(import_request) as response:
+                        self.assertEqual(response.status, 200)
+                    break
+                except OSError:
+                    time.sleep(0.1)
+            else:
+                self.fail("Application did not start")
+            for _ in range(20):
+                try:
+                    with urlopen(f"http://127.0.0.1:{self.webdriver_port}/status", timeout=0.2):
+                        break
+                except OSError:
+                    time.sleep(0.1)
+            else:
+                self.skipTest("geckodriver is unavailable")
+
+            session = self.webdriver("POST", "/session", {"capabilities": {"alwaysMatch": {"browserName": "firefox"}}})
+            session_id = session["value"]["sessionId"]
+            base = f"/session/{session_id}"
+            self.webdriver("POST", f"{base}/url", {"url": f"http://127.0.0.1:{app_port}/"})
+            self.webdriver(
+                "POST",
+                f"{base}/execute/sync",
+                {
+                    "script": """
+                        window.__buildBodies = [];
+                        const originalFetch = window.fetch;
+                        window.fetch = async (...args) => {
+                            if (args[0] === '/api/build') window.__buildBodies.push(JSON.parse(args[1].body));
+                            return originalFetch(...args);
+                        };
+                    """,
+                    "args": [],
+                },
+            )
+            required_types = ["cpu", "motherboard", "ram", "gpu", "disk", "psu", "cooling", "case"]
+            expected_ids = {
+                "cpu": "cpu-1",
+                "motherboard": "board-1",
+                "ram": "ram-1",
+                "gpu": "gpu-1",
+                "disk": "disk-1",
+                "psu": "psu-1",
+                "cooling": "cooler-1",
+                "case": "case-1",
+            }
+            expected_option_counts = {
+                "cpu": 2,
+                "motherboard": 2,
+                "ram": 1,
+                "gpu": 1,
+                "disk": 1,
+                "psu": 1,
+                "cooling": 1,
+                "case": 1,
+            }
+            for _ in range(20):
+                select_count = self.webdriver(
+                    "POST", f"{base}/execute/sync", {"script": "return document.querySelectorAll('select').length", "args": []}
+                )["value"]
+                if select_count == len(required_types):
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail("builder does not render all required component selectors")
+            self.assertEqual(
+                self.webdriver(
+                    "POST", f"{base}/execute/sync",
+                    {"script": "return [...document.querySelectorAll('select')].map(select => select.id)", "args": []},
+                )["value"],
+                required_types,
+                "builder renders a selector for every required component type",
+            )
+            for component_type in required_types:
+                self.assertEqual(
+                    self.webdriver(
+                        "POST", f"{base}/execute/sync",
+                        {"script": f"return document.querySelector('#{component_type}').options.length", "args": []},
+                    )["value"],
+                    expected_option_counts[component_type],
+                    f"{component_type} selector exposes every catalog model",
+                )
+                self.assertEqual(
+                    self.webdriver(
+                        "POST", f"{base}/execute/sync",
+                        {"script": f"return document.querySelector('#{component_type}').value", "args": []},
+                    )["value"],
+                    expected_ids[component_type],
+                    f"{component_type} selector exposes its catalog selection",
+                )
+            for _ in range(20):
+                summary = self.webdriver(
+                    "POST", f"{base}/execute/sync", {"script": "return document.querySelector('#build-products').textContent", "args": []}
+                )["value"]
+                if all(product["name"] in summary for product in payload["products"] if product["id"] in expected_ids.values()):
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail("complete build summary did not render")
+            self.assertEqual(
+                self.webdriver(
+                    "POST", f"{base}/execute/sync",
+                    {"script": "return document.querySelectorAll('#build-products li').length", "args": []},
+                )["value"],
+                8,
+                "build summary renders every selected product together",
+            )
+            page = self.webdriver(
+                "POST", f"{base}/execute/sync", {"script": "return document.querySelector('.summary').textContent", "args": []}
+            )["value"]
+            self.assertIn("5742 PLN", page)
+            self.assertIn("Kompatybilny zestaw", page)
+            self.webdriver(
+                "POST", f"{base}/execute/sync",
+                {"script": "const cpu = document.querySelector('#cpu'); cpu.value = 'cpu-2'; cpu.dispatchEvent(new Event('change', {bubbles: true}));", "args": []},
+            )
+            for _ in range(20):
+                bodies = self.webdriver(
+                    "POST", f"{base}/execute/sync", {"script": "return window.__buildBodies", "args": []}
+                )["value"]
+                if bodies and bodies[-1]["selections"]["cpu"] == "cpu-2":
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail("changing a component does not refresh the build")
+            self.assertEqual(set(bodies[-1]["selections"]), set(required_types), "refresh submits every component selection")
+            self.assertEqual(bodies[-1]["selections"]["cpu"], "cpu-2", "refresh submits the newly selected model")
+            for _ in range(20):
+                refreshed_products = self.webdriver(
+                    "POST", f"{base}/execute/sync",
+                    {"script": "return document.querySelector('#build-products').textContent", "args": []},
+                )["value"]
+                if "Intel Core i5-14600K" in refreshed_products:
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail("CPU change does not render the newly selected product")
+            blocked_summary = self.webdriver(
+                "POST", f"{base}/execute/sync", {"script": "return document.querySelector('.summary').textContent", "args": []}
+            )["value"]
+            self.assertIn("Konfiguracja zablokowana", blocked_summary, "incompatible CPU change blocks the build")
+            self.assertIn("socketu", blocked_summary, "blocked build renders the compatibility issue")
+            self.webdriver(
+                "POST", f"{base}/execute/sync",
+                {"script": "const board = document.querySelector('#motherboard'); board.value = 'board-2'; board.dispatchEvent(new Event('change', {bubbles: true}));", "args": []},
+            )
+            for _ in range(20):
+                bodies = self.webdriver(
+                    "POST", f"{base}/execute/sync", {"script": "return window.__buildBodies", "args": []}
+                )["value"]
+                if bodies[-1]["selections"]["motherboard"] == "board-2":
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail("changing the motherboard does not refresh the build")
+            self.assertEqual(
+                self.webdriver(
+                    "POST", f"{base}/execute/sync",
+                    {"script": "return document.querySelectorAll('#build-products li').length", "args": []},
+                )["value"],
+                8,
+                "refresh keeps all selected products in the summary",
+            )
+            refreshed_products = self.webdriver(
+                "POST", f"{base}/execute/sync",
+                {"script": "return document.querySelector('#build-products').textContent", "args": []},
+            )["value"]
+            self.assertIn("Intel Core i5-14600K", refreshed_products)
+            self.assertIn("ASUS Prime Z790-P", refreshed_products)
+            refreshed_summary = self.webdriver(
+                "POST", f"{base}/execute/sync", {"script": "return document.querySelector('.summary').textContent", "args": []}
+            )["value"]
+            self.assertIn("6342 PLN", refreshed_summary, "refresh shows the total for the newly selected models")
+            self.assertIn("Kompatybilny zestaw", refreshed_summary, "refresh keeps the current analysis visible")
+            self.assertNotIn("socketu", refreshed_summary, "compatible motherboard change clears the prior issue")
+        finally:
+            if "session_id" in locals():
+                try:
+                    self.webdriver("DELETE", f"/session/{session_id}")
+                except OSError:
+                    pass
+            driver_process.terminate()
+            driver_process.wait(timeout=3)
+            app_process.terminate()
+            app_process.wait(timeout=3)
+
 
 if __name__ == "__main__":
     unittest.main()
