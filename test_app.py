@@ -1827,6 +1827,25 @@ class BuilderSmokeTest(unittest.TestCase):
             self.assertIn("Konfiguracja zablokowana", refreshed_summary, "refresh keeps the current analysis visible")
             self.assertNotIn("socketu", refreshed_summary, "compatible motherboard change clears the prior issue")
             self.assertIn("976 W | PSU: 750 W", refreshed_summary, "motherboard refresh keeps the current power assessment")
+            self.webdriver(
+                "POST", f"{base}/execute/sync",
+                {"script": "const board = document.querySelector('#motherboard'); board.value = 'board-1'; board.dispatchEvent(new Event('change', {bubbles: true}));", "args": []},
+            )
+            for _ in range(20):
+                incompatible_board_summary = self.webdriver(
+                    "POST", f"{base}/execute/sync", {"script": "return document.querySelector('.summary').textContent", "args": []}
+                )["value"]
+                if "socketu" in incompatible_board_summary:
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail("changing to a motherboard with a different socket does not block the build")
+            self.assertIn("Konfiguracja zablokowana", incompatible_board_summary)
+            self.assertIn("Intel Core i5-14600K", incompatible_board_summary)
+            self.assertIn("MSI B650 Gaming Plus WiFi", incompatible_board_summary)
+            self.assertIn("socketu", incompatible_board_summary)
+            self.assertIn("LGA1700", incompatible_board_summary)
+            self.assertIn("AM5", incompatible_board_summary)
         finally:
             if "session_id" in locals():
                 try:

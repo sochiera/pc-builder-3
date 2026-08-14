@@ -533,9 +533,15 @@ PAGE = """<!doctype html>
        document.querySelector('#power').textContent = '';
        document.querySelector('#balance').textContent = '';
        document.querySelector('#issue').replaceChildren();
-        document.querySelector('#build-products').replaceChildren();
-      }
-      let buildRefreshGeneration = 0;
+       document.querySelector('#build-products').replaceChildren();
+       }
+       function showBuildError(message) {
+         clearBuildSummary();
+         const status = document.querySelector('#status');
+         status.textContent = `Blad doboru: ${message}`;
+         status.className = 'blocked';
+       }
+       let buildRefreshGeneration = 0;
       let catalogRefreshGeneration = 0;
       async function refreshBuild() {
         const refreshGeneration = ++buildRefreshGeneration;
@@ -622,14 +628,7 @@ PAGE = """<!doctype html>
           });
           await refreshBuild();
         } catch (error) {
-          document.querySelector('#status').textContent = `Blad doboru: ${error.message}`;
-          document.querySelector('#status').className = 'blocked';
-          document.querySelector('#budget-summary').textContent = '';
-          document.querySelector('#total').textContent = '';
-          document.querySelector('#power').textContent = '';
-          document.querySelector('#balance').textContent = '';
-          document.querySelector('#issue').replaceChildren();
-          document.querySelector('#build-products').replaceChildren();
+           showBuildError(error.message);
         }
      }
     async function importCatalog() {

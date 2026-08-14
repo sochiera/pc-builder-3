@@ -52,7 +52,7 @@ Jako kupujacy chce przy rozpoznanym produkcie porownac oferte x-kom z oferta jed
 - Sprawdzenie: otworz przygotowany rozpoznany produkt z oferta x-kom i drugiego sklepu, porownaj widoczne ceny, a nastepnie otworz kazdy link i sprawdz, ze prowadzi do wlasciwej oferty.
 - Poza zakresem: kolejny sklep, koszt dostawy, automatyczne wyszukiwanie ofert i optymalizacja koszyka.
 
-## US-006 — Uzytkownik sprawdza kompatybilnosc zestawu [nowa]
+## US-006 — Uzytkownik sprawdza kompatybilnosc zestawu [do weryfikacji]
 
 Jako kupujacy chce po kazdej zmianie zobaczyc, czy caly zestaw jest zgodny oraz dlaczego, zeby nie kupic czesci, ktorych nie da sie polaczyc.
 
