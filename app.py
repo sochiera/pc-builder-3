@@ -46,7 +46,25 @@ def import_products(payload: dict) -> dict:
     for index, product in enumerate(products):
         if not isinstance(product, dict) or "id" not in product or "name" not in product:
             raise ValueError(f"product at index {index} must include id and name")
-    return {"products": products, "count": len(products)}
+
+    catalog = []
+    products_by_model = {}
+    for offer in products:
+        model = offer.get("model")
+        if not isinstance(model, str) or not model or model not in CPUS:
+            catalog.append(offer)
+            continue
+        product = products_by_model.get(model)
+        if product is None:
+            product = {
+                "id": model,
+                "name": CPUS.get(model, {}).get("name", offer["name"]),
+                "offers": [],
+            }
+            products_by_model[model] = product
+            catalog.append(product)
+        product["offers"].append(offer)
+    return {"products": catalog, "count": len(catalog)}
 
 
 PAGE = """<!doctype html>
@@ -89,8 +107,8 @@ PAGE = """<!doctype html>
     const cpu = document.querySelector('#cpu');
     const motherboard = document.querySelector('#motherboard');
     const preparedResponse = { products: [
-      { id: 'cpu-1', name: 'AMD Ryzen 5 7600' },
-      { id: 'board-1', name: 'MSI B650 Gaming Plus WiFi' }
+      { id: 'offer-1', model: 'ryzen-5-7600', name: 'AMD Ryzen 5 7600 BOX', price: 799, source: 'x-kom' },
+      { id: 'offer-2', model: 'ryzen-5-7600', name: 'AMD 7600 3.8 GHz', price: 829, source: 'prepared-shop' }
     ] };
     function renderImportedProducts(products) {
       const list = document.querySelector('#import-products');
@@ -98,6 +116,15 @@ PAGE = """<!doctype html>
       products.forEach(product => {
         const item = document.createElement('li');
         item.textContent = `${product.name} (${product.id})`;
+        if (product.offers) {
+          const offers = document.createElement('div');
+          product.offers.forEach(offer => {
+            const offerItem = document.createElement('div');
+            offerItem.textContent = `${offer.name} - ${offer.price} PLN - ${offer.source}`;
+            offers.append(offerItem);
+          });
+          item.append(offers);
+        }
         list.append(item);
       });
     }

@@ -7,7 +7,7 @@ Jako operator katalogu chce pobrac komplet aktualnie dostepnych produktow z x-ko
 - Sprawdzenie: uruchom import na przygotowanej odpowiedzi x-kom i sprawdz, ze raport pokazuje wszystkie zawarte w niej produkty oraz liczbe zaimportowanych pozycji.
 - Poza zakresem: import przyrostowy, harmonogram i inne sklepy.
 
-## US-002 — System rozpoznaje ten sam produkt [nowa]
+## US-002 — System rozpoznaje ten sam produkt [do weryfikacji]
 
 Jako opiekun katalogu chce zobaczyc, ze dwie oferty tego samego modelu zostaly przypisane do jednego produktu, zeby ceny nie tworzyly duplikatow czesci.
 
