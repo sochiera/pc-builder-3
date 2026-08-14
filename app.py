@@ -72,10 +72,20 @@ POWER_REQUIREMENTS = {
     "regnum-400": 0,
 }
 PSU_CAPACITIES = {"psu-750": 750}
+PURPOSES = {
+    "gaming": "Gaming",
+    "programming": "Programowanie",
+}
 THREE_PART_DEPENDENCIES = {
     ("ryzen-5-7600", "b650", "fortis-5"):
         "wybrane chlodzenie nie jest zgodne z wymaganiami tego polaczenia procesora i plyty glownej",
 }
+
+
+def validate_purpose(purpose: str) -> str:
+    if purpose not in PURPOSES:
+        raise ValueError("unknown purpose selection")
+    return purpose
 
 
 def component_type_for(model: str) -> str | None:
@@ -106,8 +116,10 @@ def analyse(
     motherboard_id: str,
     ram_id: str | None = None,
     selected_components: list[dict] | None = None,
+    purpose: str = "gaming",
 ) -> dict:
     """Return the build summary used by both the browser and the HTTP test."""
+    validate_purpose(purpose)
     cpu = CPUS[cpu_id]
     motherboard = MOTHERBOARDS[motherboard_id]
     issues = []
@@ -175,7 +187,8 @@ def analyse(
             },
             {
                 "level": "information",
-                "message": f"Informacja: analiza obejmuje {len(selected_components)} wybranych elementow zestawu.",
+                "message": f"Informacja: analiza dla celu {PURPOSES[purpose]} obejmuje "
+                f"{len(selected_components)} wybranych elementow zestawu.",
             },
         ])
     if uncertainty_reasons:
@@ -192,6 +205,7 @@ def analyse(
         "issues": issues,
         "power_required": power_required,
         "psu_power": psu_power,
+        "purpose": purpose,
     }
 
 
@@ -273,9 +287,10 @@ def catalog_options(catalog: list[dict], imported_products: list[dict] | None = 
     return options
 
 
-def build_from_selections(selections: dict, catalog: list[dict]) -> dict:
+def build_from_selections(selections: dict, catalog: list[dict], purpose: str = "gaming") -> dict:
     if not isinstance(selections, dict):
         raise ValueError("selections must be an object")
+    validate_purpose(purpose)
     by_id = {product["id"]: product for product in catalog}
     if set(selections) != set(REQUIRED_TYPES):
         raise ValueError("one selection is required for each component type")
@@ -288,12 +303,13 @@ def build_from_selections(selections: dict, catalog: list[dict]) -> dict:
     cpu = next(product for product in selected if product["type"] == "cpu")
     motherboard = next(product for product in selected if product["type"] == "motherboard")
     ram = next(product for product in selected if product["type"] == "ram")
-    analysis = analyse(cpu["model"], motherboard["model"], ram["model"], selected)
+    analysis = analyse(cpu["model"], motherboard["model"], ram["model"], selected, purpose)
     total = sum(product["price"] for product in selected)
     analysis["total"] = total
     return {
         "products": [product["id"] for product in selected],
         "total": total,
+        "purpose": purpose,
         "analysis": analysis,
     }
 
@@ -320,7 +336,7 @@ PAGE = """<!doctype html>
   <header><h1>Buduj PC</h1><p class='lead'>Sprawdz kompatybilnosc zestawu na biezaco.</p></header>
   <main>
     <section id='selectors'></section>
-    <section class='summary' aria-live='polite'><strong id='status'>Wybierz czesci...</strong><p id='total'></p><p id='power'></p><div id='issue'></div><ul id='build-products'></ul></section>
+    <section class='summary' aria-live='polite'><label for='purpose'>Przeznaczenie zestawu</label><select id='purpose'><option value='gaming'>Gaming</option><option value='programming'>Programowanie</option></select><strong id='status'>Wybierz czesci...</strong><p id='total'></p><p id='power'></p><div id='issue'></div><ul id='build-products'></ul></section>
     <section class='summary'>
       <button id='import' type='button'>Importuj odpowiedz x-kom</button>
       <p id='import-status' aria-live='polite'></p>
@@ -342,6 +358,7 @@ PAGE = """<!doctype html>
      const issueLabels = { blocker: 'Blokada', warning: 'Ostrzezenie', information: 'Informacja' };
     let catalog = [];
     let buildCatalog = [];
+     const purposeOptions = [...document.querySelectorAll('#purpose option')];
     const preparedResponse = { products: [
       { id: 'offer-1', model: 'ryzen-5-7600', name: 'AMD Ryzen 5 7600 BOX', price: 799, source: 'x-kom' },
       { id: 'offer-2', model: 'ryzen-5-7600', name: 'AMD 7600 3.8 GHz', price: 829, source: 'prepared-shop' }
@@ -387,10 +404,12 @@ PAGE = """<!doctype html>
     async function refreshBuild() {
       const selections = Object.fromEntries(requiredTypes.map(type => [type, document.querySelector(`#${type}`).value]));
       if (Object.values(selections).some(value => !value)) return;
+      const purpose = document.querySelector('#purpose').value;
+      if (!purposeOptions.some(option => option.value === purpose)) return;
       const response = await fetch('/api/build', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ selections })
+        body: JSON.stringify({ selections, purpose })
       });
       const build = await response.json();
        const status = document.querySelector('#status');
@@ -402,7 +421,7 @@ PAGE = """<!doctype html>
        status.textContent = statusPresentation.label;
        status.className = statusPresentation.className;
       document.querySelector('#total').textContent = `Suma: ${build.total} PLN`;
-      document.querySelector('#power').textContent = `Zapotrzebowanie: ${build.analysis.power_required} W | PSU: ${build.analysis.psu_power} W`;
+      document.querySelector('#power').textContent = `Przeznaczenie: ${build.purpose} | Zapotrzebowanie: ${build.analysis.power_required} W | PSU: ${build.analysis.psu_power} W`;
       const issueList = document.querySelector('#issue');
       issueList.replaceChildren();
        build.analysis.issues.forEach(issue => {
@@ -459,6 +478,7 @@ PAGE = """<!doctype html>
       await refreshBuild();
     }
     document.querySelector('#import').addEventListener('click', importCatalog);
+    document.querySelector('#purpose').addEventListener('change', refreshBuild);
     refreshCatalog();
   </script>
 </body>
@@ -502,7 +522,7 @@ class Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", "0"))
             payload = json.loads(self.rfile.read(length))
             if request.path == "/api/build":
-                result = build_from_selections(payload.get("selections"), BUILD_CATALOG)
+                result = build_from_selections(payload.get("selections"), BUILD_CATALOG, payload.get("purpose", "gaming"))
                 self.respond(HTTPStatus.OK, "application/json", json.dumps(result).encode())
                 return
             report = import_products(payload)

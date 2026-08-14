@@ -834,11 +834,14 @@ class BuilderSmokeTest(unittest.TestCase):
                 {
                     "script": """
                         window.__buildBodies = [];
+                        window.__buildResponses = [];
                         const originalFetch = window.fetch;
                         window.__realFetch = originalFetch;
                         window.fetch = async (...args) => {
                             if (args[0] === '/api/build') window.__buildBodies.push(JSON.parse(args[1].body));
-                            return originalFetch(...args);
+                            const response = await originalFetch(...args);
+                            if (args[0] === '/api/build') window.__buildResponses.push(await response.clone().json());
+                            return response;
                         };
                     """,
                     "args": [],
@@ -867,7 +870,7 @@ class BuilderSmokeTest(unittest.TestCase):
             }
             for _ in range(20):
                 select_count = self.webdriver(
-                    "POST", f"{base}/execute/sync", {"script": "return document.querySelectorAll('select').length", "args": []}
+                    "POST", f"{base}/execute/sync", {"script": "return document.querySelectorAll('#selectors select').length", "args": []}
                 )["value"]
                 if select_count == len(required_types):
                     break
@@ -877,7 +880,7 @@ class BuilderSmokeTest(unittest.TestCase):
             self.assertEqual(
                 self.webdriver(
                     "POST", f"{base}/execute/sync",
-                    {"script": "return [...document.querySelectorAll('select')].map(select => select.id)", "args": []},
+                    {"script": "return [...document.querySelectorAll('#selectors select')].map(select => select.id)", "args": []},
                 )["value"],
                 required_types,
                 "builder renders a selector for every required component type",
@@ -922,6 +925,83 @@ class BuilderSmokeTest(unittest.TestCase):
             self.assertIn("5742 PLN", page)
             self.assertIn("Konfiguracja zablokowana", page)
             self.assertIn("900 W | PSU: 750 W", page, "initial analysis renders the current power reserve")
+            self.assertIn("Przeznaczenie: gaming", page, "initial analysis renders the default purpose")
+            self.webdriver(
+                "POST", f"{base}/execute/sync",
+                {
+                    "script": "document.querySelector('#purpose').dispatchEvent(new Event('change', {bubbles: true}));",
+                    "args": [],
+                },
+            )
+            for _ in range(20):
+                gaming_responses = self.webdriver(
+                    "POST", f"{base}/execute/sync", {"script": "return window.__buildResponses", "args": []}
+                )["value"]
+                if any(response.get("purpose") == "gaming" for response in gaming_responses):
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail("gaming purpose change does not render a build response")
+            gaming_analysis = next(
+                response["analysis"] for response in gaming_responses if response.get("purpose") == "gaming"
+            )
+            gaming_information = next(
+                issue["message"] for issue in gaming_analysis["issues"] if issue["level"] == "information"
+            )
+            self.assertIn("Gaming", gaming_information, "gaming analysis explains its selected purpose")
+            purpose_selector = self.webdriver(
+                "POST", f"{base}/execute/sync",
+                {"script": "return document.querySelector('#purpose').tagName", "args": []},
+            )
+            self.assertEqual(purpose_selector["value"], "SELECT", "builder restricts purpose to prepared choices")
+            purpose_options = self.webdriver(
+                "POST", f"{base}/execute/sync",
+                {"script": "return [...document.querySelectorAll('#purpose option')].map(option => option.value)", "args": []},
+            )["value"]
+            self.assertIn("gaming", purpose_options, "purpose selector exposes the prepared gaming option")
+            self.assertIn("programming", purpose_options, "purpose selector exposes another prepared option")
+            self.webdriver(
+                "POST", f"{base}/execute/sync",
+                {
+                    "script": "const purpose = document.querySelector('#purpose'); purpose.value = 'programming'; purpose.dispatchEvent(new Event('change', {bubbles: true}));",
+                    "args": [],
+                },
+            )
+            for _ in range(20):
+                bodies = self.webdriver(
+                    "POST", f"{base}/execute/sync", {"script": "return window.__buildBodies", "args": []}
+                )["value"]
+                if bodies and bodies[-1].get("purpose") == "programming":
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail("purpose change does not submit the selected purpose with the build")
+            self.assertEqual(bodies[-1]["purpose"], "programming", "build request carries the changed purpose")
+            for _ in range(20):
+                purpose_summary = self.webdriver(
+                    "POST", f"{base}/execute/sync", {"script": "return document.querySelector('.summary').textContent", "args": []}
+                )["value"]
+                if "programming" in purpose_summary:
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail("selected purpose does not render beside the build")
+            self.assertIn("Przeznaczenie: programming", purpose_summary, "changed purpose remains visible with the build")
+            programming_responses = self.webdriver(
+                "POST", f"{base}/execute/sync", {"script": "return window.__buildResponses", "args": []}
+            )["value"]
+            programming_analysis = next(
+                response["analysis"] for response in programming_responses if response.get("purpose") == "programming"
+            )
+            programming_information = next(
+                issue["message"] for issue in programming_analysis["issues"] if issue["level"] == "information"
+            )
+            self.assertIn("Programowanie", programming_information, "programming analysis explains its selected purpose")
+            self.assertNotEqual(
+                programming_analysis,
+                gaming_analysis,
+                "changing purpose refreshes an analysis that reflects the new goal",
+            )
             dependency_message = self.webdriver(
                 "POST", f"{base}/execute/sync",
                 {"script": "return [...document.querySelectorAll('#issue [data-level=blocker]')].map(item => item.textContent).join(' ')", "args": []},
