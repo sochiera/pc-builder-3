@@ -129,6 +129,81 @@ class BuilderSmokeTest(unittest.TestCase):
             self.assertIn("cpu", catalog_rendered["value"])
             self.assertIn("ryzen-5-7600", catalog_rendered["value"])
             self.assertIn("829 PLN", catalog_rendered["value"])
+            catalog_controls = self.webdriver(
+                "POST",
+                f"{base}/execute/sync",
+                {
+                    "script": """
+                        const search = document.querySelector('#catalog-search');
+                        const type = document.querySelector('#catalog-type');
+                        return {
+                            searchTag: search?.tagName || null,
+                            searchType: search?.type || null,
+                            typeTag: type?.tagName || null,
+                            typeOptions: type ? [...type.options].map(option => option.value) : [],
+                        };
+                    """,
+                    "args": [],
+                },
+            )["value"]
+            with self.subTest("name search control"):
+                self.assertEqual(catalog_controls["searchTag"], "INPUT", "catalog exposes a product-name search control")
+            with self.subTest("name search value"):
+                self.assertEqual(catalog_controls["searchType"], "text", "catalog search accepts a name fragment")
+            with self.subTest("component type filter"):
+                self.assertEqual(catalog_controls["typeTag"], "SELECT", "catalog exposes a component-type filter")
+                self.assertIn("gpu", catalog_controls["typeOptions"], "component-type filter offers GPU")
+            self.webdriver(
+                "POST",
+                f"{base}/execute/sync",
+                {
+                    "script": """
+                        const search = document.querySelector('#catalog-search');
+                        const type = document.querySelector('#catalog-type');
+                        if (search && type) {
+                            search.value = '4070';
+                            search.dispatchEvent(new Event('input', {bubbles: true}));
+                            type.value = 'gpu';
+                            type.dispatchEvent(new Event('change', {bubbles: true}));
+                        }
+                    """,
+                    "args": [],
+                },
+            )
+            filtered_catalog = self.webdriver(
+                "POST",
+                f"{base}/execute/sync",
+                {
+                    "script": "return [...document.querySelectorAll('#catalog-products li')].map(item => item.textContent)",
+                    "args": [],
+                },
+            )["value"]
+            self.assertEqual(filtered_catalog, ["gpu - rtx-4070 - 2399 PLN"], "catalog shows only the GPU matching the name fragment")
+            self.webdriver("POST", f"{base}/execute/sync", {"script": "document.querySelector('#import').click()", "args": []})
+            for _ in range(20):
+                refreshed_status = self.webdriver(
+                    "POST",
+                    f"{base}/execute/sync",
+                    {"script": "return document.querySelector('#import-status').textContent", "args": []},
+                )
+                if refreshed_status["value"] == "Zaimportowano: 8":
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail("catalog refresh import did not render")
+            refreshed_filtered_catalog = self.webdriver(
+                "POST",
+                f"{base}/execute/sync",
+                {
+                    "script": "return [...document.querySelectorAll('#catalog-products li')].map(item => item.textContent)",
+                    "args": [],
+                },
+            )["value"]
+            self.assertEqual(
+                refreshed_filtered_catalog,
+                ["gpu - rtx-4070 - 2399 PLN"],
+                "catalog refresh preserves active search and type filters",
+            )
             self.webdriver("POST", f"{base}/execute/sync", {"script": "window.fetch = async () => new Response(JSON.stringify({error: 'bad response'}), {status: 400}); document.querySelector('#import').click()", "args": []})
             for _ in range(20):
                 error = self.webdriver("POST", f"{base}/execute/sync", {"script": "return document.querySelector('#import-status').textContent", "args": []})

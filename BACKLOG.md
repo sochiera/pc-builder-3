@@ -124,7 +124,7 @@ Jako kupujacy chce otrzymac najtanszy zgodny zestaw dla jednego zastosowania i b
 - Sprawdzenie: wybierz zastosowanie i budzet dla przygotowanego katalogu, uruchom dobor i sprawdz, ze pokazany kompletny zgodny zestaw jest najtanszy z dostepnych kombinacji.
 - Poza zakresem: kilka propozycji, optymalizacja wydajnosci i zakupy w wielu sklepach.
 
-## US-015 — Uzytkownik odnajduje produkt [nowa]
+## US-015 — Uzytkownik odnajduje produkt [do weryfikacji]
 
 Jako kupujacy chce wyszukac model i ograniczyc katalog do jednego typu czesci, zeby szybko dotrzec do interesujacego produktu.
 

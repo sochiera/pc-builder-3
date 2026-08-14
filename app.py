@@ -453,10 +453,14 @@ PAGE = """<!doctype html>
       <p id='import-status' aria-live='polite'></p>
       <ul id='import-products'></ul>
     </section>
-    <section class='summary'>
-      <h2>Katalog czesci</h2>
-      <ul id='catalog-products'></ul>
-    </section>
+     <section class='summary'>
+       <h2>Katalog czesci</h2>
+       <label for='catalog-search'>Szukaj produktu</label>
+       <input id='catalog-search' type='text' placeholder='Wpisz fragment nazwy'>
+       <label for='catalog-type'>Typ czesci</label>
+       <select id='catalog-type'><option value=''>Wszystkie typy</option></select>
+       <ul id='catalog-products'></ul>
+     </section>
   </main>
   <script>
      const componentDefinitions = [
@@ -628,26 +632,48 @@ PAGE = """<!doctype html>
         status.textContent = `Blad importu: ${error.message}`;
       }
     }
-    function renderCatalog(products) {
-      const list = document.querySelector('#catalog-products');
-      list.replaceChildren();
+     function renderCatalog(products) {
+       const list = document.querySelector('#catalog-products');
+       list.replaceChildren();
       products.forEach(product => {
         const item = document.createElement('li');
         item.textContent = `${product.type} - ${product.model} - ${product.price} PLN`;
-        list.append(item);
-      });
-    }
-    async function refreshCatalog() {
-      const response = await fetch('/api/catalog');
-      const report = await response.json();
-      if (!response.ok) throw new Error(report.error || 'Nie mozna otworzyc katalogu');
-        catalog = report.products;
-        buildCatalog = report.options;
-        renderCatalog(catalog);
-        renderSelectors(buildCatalog);
-      await refreshBuild();
-    }
-    document.querySelector('#import').addEventListener('click', importCatalog);
+         list.append(item);
+       });
+     }
+     function filterCatalog() {
+       const fragment = document.querySelector('#catalog-search').value.trim().toLowerCase();
+       const selectedType = document.querySelector('#catalog-type').value;
+       const matches = product => {
+         const searchableText = `${product.model} ${product.name}`.toLowerCase();
+         return (!fragment || searchableText.includes(fragment))
+           && (!selectedType || product.type === selectedType);
+       };
+       renderCatalog(catalog.filter(matches));
+     }
+     function renderCatalogTypeOptions() {
+       const select = document.querySelector('#catalog-type');
+       const selectedType = select.value;
+       select.replaceChildren(new Option('Wszystkie typy', ''));
+       [...new Set(catalog.map(product => product.type))].forEach(type => {
+         select.append(new Option(type, type));
+       });
+       select.value = [...select.options].some(option => option.value === selectedType) ? selectedType : '';
+     }
+     async function refreshCatalog() {
+       const response = await fetch('/api/catalog');
+       const report = await response.json();
+       if (!response.ok) throw new Error(report.error || 'Nie mozna otworzyc katalogu');
+         catalog = report.products;
+         buildCatalog = report.options;
+         renderCatalogTypeOptions();
+          filterCatalog();
+         renderSelectors(buildCatalog);
+       await refreshBuild();
+     }
+     document.querySelector('#import').addEventListener('click', importCatalog);
+     document.querySelector('#catalog-search').addEventListener('input', filterCatalog);
+     document.querySelector('#catalog-type').addEventListener('change', filterCatalog);
     document.querySelector('#purpose').addEventListener('change', refreshBuild);
     document.querySelector('#budget').addEventListener('change', refreshBuild);
     document.querySelector('#recommend').addEventListener('click', recommendSet);
