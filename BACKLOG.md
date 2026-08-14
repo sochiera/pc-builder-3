@@ -70,7 +70,7 @@ Jako kupujacy chce zostac ostrzezony, gdy brakuje danych albo dane sobie przecza
 - Sprawdzenie: otworz przygotowany zestaw raz z brakujacym parametrem, a raz ze sprzecznymi wartosciami, i sprawdz, ze w obu przypadkach ocena pozostaje nierozstrzygnieta z podanym powodem.
 - Poza zakresem: automatyczne uzupelnianie danych i panel korekty katalogu.
 
-## US-009 — Uzytkownik sprawdza zgodnosc RAM [do weryfikacji]
+## US-009 — Uzytkownik sprawdza zgodnosc RAM [zrobiona]
 
 Jako skladajacy komputer chce zobaczyc, czy wybrana pamiec RAM pasuje do plyty i CPU, zeby uniknac nieobslugiwanej pamieci.
 
