@@ -25,7 +25,7 @@ Jako kupujacy chce zobaczyc liste dostepnych czesci z typem, modelem i cena, zeb
 - Sprawdzenie: otworz katalog po imporcie i sprawdz, ze widac po jednej przygotowanej czesci kazdego obslugiwanego typu wraz z modelem i cena.
 - Poza zakresem: filtrowanie, wyszukiwanie, sortowanie i stronicowanie.
 
-## US-004 — Uzytkownik sklada kompletny komputer [w toku]
+## US-004 — Uzytkownik sklada kompletny komputer [do weryfikacji]
 
 Jako kupujacy chce wybrac po jednej czesci wymaganych typow i zobaczyc caly zestaw, zeby miec jedno miejsce do jego budowy.
 

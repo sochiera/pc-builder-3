@@ -309,8 +309,13 @@ PAGE = """<!doctype html>
     </section>
   </main>
   <script>
-     const requiredTypes = ['cpu', 'motherboard', 'ram', 'gpu', 'disk', 'psu', 'cooling', 'case'];
-     const typeNames = { cpu: 'Procesor', motherboard: 'Plyta glowna', ram: 'Pamiec RAM', gpu: 'Karta graficzna', disk: 'Dysk', psu: 'Zasilacz', cooling: 'Chlodzenie', case: 'Obudowa' };
+     const componentDefinitions = [
+       ['cpu', 'Procesor'], ['motherboard', 'Plyta glowna'], ['ram', 'Pamiec RAM'],
+       ['gpu', 'Karta graficzna'], ['disk', 'Dysk'], ['psu', 'Zasilacz'],
+       ['cooling', 'Chlodzenie'], ['case', 'Obudowa'],
+     ];
+     const requiredTypes = componentDefinitions.map(([type]) => type);
+     const typeNames = Object.fromEntries(componentDefinitions);
      const issueLabels = { blocker: 'Blokada', warning: 'Ostrzezenie', information: 'Informacja' };
     let catalog = [];
     let buildCatalog = [];
