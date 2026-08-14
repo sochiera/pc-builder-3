@@ -106,7 +106,7 @@ Jako kupujacy chce podac maksymalny budzet i zobaczyc, ile zostalo albo o ile ze
 - Sprawdzenie: ustaw budzet ponizej ceny zestawu, a potem zmien czesc na tansza, i sprawdz aktualizacje kwoty przekroczenia albo pozostalego budzetu.
 - Poza zakresem: osobne limity kategorii, waluty i raty.
 
-## US-013 — Uzytkownik ocenia bilans zestawu [do weryfikacji]
+## US-013 — Uzytkownik ocenia bilans zestawu [zrobiona]
 
 Jako kupujacy chce zobaczyc jedna wyjasniona ocene zestawu dla wybranego zastosowania, zeby rozpoznac jego najslabszy element.
 
