@@ -43,7 +43,7 @@ Jako skladajacy komputer chce zobaczyc wyjasnienie zaleznosci obejmujacej CPU, p
 - Sprawdzenie: wybierz przygotowane CPU, plyte i chlodzenie, ktore dopiero razem tworza konflikt, i sprawdz, ze wynik wskazuje wszystkie trzy czesci oraz powod.
 - Poza zakresem: drugi rodzaj zaleznosci wieloczynnikowej i automatyczna zamiana czesci.
 
-## US-017 — Uzytkownik wybiera oferte innego sklepu [nowa]
+## US-017 — Uzytkownik wybiera oferte innego sklepu [do weryfikacji]
 
 Jako kupujacy chce przy rozpoznanym produkcie porownac oferte x-kom z oferta jednego innego sklepu i przejsc do wybranej, zeby kupic produkt w korzystniejszym miejscu.
 

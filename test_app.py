@@ -128,7 +128,63 @@ class BuilderSmokeTest(unittest.TestCase):
             )
             self.assertIn("cpu", catalog_rendered["value"])
             self.assertIn("ryzen-5-7600", catalog_rendered["value"])
-            self.assertIn("829 PLN", catalog_rendered["value"])
+            with self.subTest("catalog shows both recognized offers"):
+                self.assertIn("AMD Ryzen 5 7600 BOX", catalog_rendered["value"])
+                self.assertIn("799 PLN", catalog_rendered["value"])
+                self.assertIn("x-kom", catalog_rendered["value"])
+                self.assertIn("AMD 7600 3.8 GHz", catalog_rendered["value"])
+                self.assertIn("829 PLN", catalog_rendered["value"])
+                self.assertIn("prepared-shop", catalog_rendered["value"])
+            offer_links = self.webdriver(
+                "POST",
+                f"{base}/execute/sync",
+                {
+                    "script": """
+                        return [...document.querySelectorAll('#catalog-products li:first-child a')]
+                          .map(link => ({text: link.textContent, href: link.href}));
+                    """,
+                    "args": [],
+                },
+            )["value"]
+            with self.subTest("catalog exposes both offer links"):
+                self.assertEqual(
+                    {link["text"] for link in offer_links},
+                    {"x-kom", "prepared-shop"},
+                    "recognized product exposes one link per offer source",
+                )
+                self.assertEqual(
+                    {link["href"] for link in offer_links},
+                    {
+                        "https://x-kom.pl/p/offer-1",
+                        "https://prepared-shop.example/oferta/offer-2",
+                    },
+                    "each offer link targets its prepared offer",
+                )
+            missing_url_offer = self.webdriver(
+                "POST",
+                f"{base}/execute/sync",
+                {
+                    "script": """
+                        renderCatalog([{
+                          type: 'cpu',
+                          model: 'offline-cpu',
+                          price: 123,
+                          offers: [{name: 'Offline CPU', price: 456, source: 'offline-shop'}]
+                        }]);
+                        const item = document.querySelector('#catalog-products li');
+                        return {
+                          text: item?.textContent || '',
+                          links: item ? item.querySelectorAll('a').length : 0,
+                        };
+                    """,
+                    "args": [],
+                },
+            )["value"]
+            with self.subTest("catalog keeps offer data without a URL"):
+                self.assertIn("Offline CPU", missing_url_offer["text"])
+                self.assertIn("456 PLN", missing_url_offer["text"])
+                self.assertIn("offline-shop", missing_url_offer["text"])
+                self.assertEqual(missing_url_offer["links"], 0)
             catalog_controls = self.webdriver(
                 "POST",
                 f"{base}/execute/sync",
@@ -178,7 +234,11 @@ class BuilderSmokeTest(unittest.TestCase):
                     "args": [],
                 },
             )["value"]
-            self.assertEqual(filtered_catalog, ["gpu - rtx-4070 - 2399 PLN"], "catalog shows only the GPU matching the name fragment")
+            self.assertEqual(
+                filtered_catalog,
+                ["gpu - rtx-4070 - 2399 PLN GeForce RTX 4070 - 2399 PLN prepared-shop"],
+                "catalog shows only the GPU matching the name fragment",
+            )
             self.webdriver("POST", f"{base}/execute/sync", {"script": "document.querySelector('#import').click()", "args": []})
             for _ in range(20):
                 refreshed_status = self.webdriver(
@@ -201,7 +261,7 @@ class BuilderSmokeTest(unittest.TestCase):
             )["value"]
             self.assertEqual(
                 refreshed_filtered_catalog,
-                ["gpu - rtx-4070 - 2399 PLN"],
+                ["gpu - rtx-4070 - 2399 PLN GeForce RTX 4070 - 2399 PLN prepared-shop"],
                 "catalog refresh preserves active search and type filters",
             )
             self.webdriver("POST", f"{base}/execute/sync", {"script": "window.fetch = async () => new Response(JSON.stringify({error: 'bad response'}), {status: 400}); document.querySelector('#import').click()", "args": []})

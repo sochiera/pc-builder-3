@@ -327,6 +327,7 @@ def catalog_products(products: list[dict]) -> list[dict]:
             "model": product["id"],
             "name": product["name"],
             "price": priced_offers[-1]["price"],
+            "offers": priced_offers,
         })
     return catalog
 
@@ -475,8 +476,8 @@ PAGE = """<!doctype html>
     let buildCatalog = [];
      const purposeOptions = [...document.querySelectorAll('#purpose option')];
      const preparedResponse = { products: [
-       { id: 'offer-1', model: 'ryzen-5-7600', name: 'AMD Ryzen 5 7600 BOX', price: 799, source: 'x-kom' },
-       { id: 'offer-2', model: 'ryzen-5-7600', name: 'AMD 7600 3.8 GHz', price: 829, source: 'prepared-shop' },
+        { id: 'offer-1', model: 'ryzen-5-7600', name: 'AMD Ryzen 5 7600 BOX', price: 799, source: 'x-kom', url: 'https://x-kom.pl/p/offer-1' },
+        { id: 'offer-2', model: 'ryzen-5-7600', name: 'AMD 7600 3.8 GHz', price: 829, source: 'prepared-shop', url: 'https://prepared-shop.example/oferta/offer-2' },
        { id: 'offer-3', model: 'b650', name: 'MSI B650 Gaming Plus WiFi', price: 699, source: 'prepared-shop' },
        { id: 'offer-4', model: 'ddr5-6000', name: 'Kingston Fury DDR5 32 GB', price: 499, source: 'prepared-shop' },
        { id: 'offer-5', model: 'rtx-4070', name: 'GeForce RTX 4070', price: 2399, source: 'prepared-shop' },
@@ -632,15 +633,27 @@ PAGE = """<!doctype html>
         status.textContent = `Blad importu: ${error.message}`;
       }
     }
-     function renderCatalog(products) {
-       const list = document.querySelector('#catalog-products');
-       list.replaceChildren();
-      products.forEach(product => {
-        const item = document.createElement('li');
-        item.textContent = `${product.type} - ${product.model} - ${product.price} PLN`;
-         list.append(item);
-       });
-     }
+      function renderCatalog(products) {
+        const list = document.querySelector('#catalog-products');
+        list.replaceChildren();
+       products.forEach(product => {
+          const item = document.createElement('li');
+          item.textContent = `${product.type} - ${product.model} - ${product.price} PLN`;
+          (product.offers || []).forEach(offer => {
+            const details = document.createTextNode(` ${offer.name} - ${offer.price} PLN `);
+            if (offer.url) {
+              const link = document.createElement('a');
+              link.href = offer.url;
+              link.textContent = offer.source;
+              link.title = `${offer.name} - ${offer.price} PLN`;
+              item.append(details, link);
+            } else {
+              item.append(details, document.createTextNode(offer.source));
+            }
+          });
+          list.append(item);
+        });
+      }
      function filterCatalog() {
        const fragment = document.querySelector('#catalog-search').value.trim().toLowerCase();
        const selectedType = document.querySelector('#catalog-type').value;
