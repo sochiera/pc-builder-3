@@ -221,6 +221,63 @@ class BuilderSmokeTest(unittest.TestCase):
             process.terminate()
             process.wait(timeout=3)
 
+    def test_analysis_exposes_blocker_warning_and_information_with_reasons(self):
+        from app import analyse
+
+        selected_components = [
+            {"type": "cpu", "model": "core-i5-14600k"},
+            {"type": "motherboard", "model": "b650"},
+            {"type": "ram", "model": "ddr4-3200"},
+            {"type": "gpu", "model": "rtx-4070"},
+            {"type": "disk", "model": "nvme-1tb"},
+            {"type": "psu", "model": "psu-750"},
+            {"type": "cooling", "model": "fortis-5"},
+            {"type": "case", "model": "regnum-400"},
+        ]
+
+        result = analyse(
+            "core-i5-14600k",
+            "b650",
+            "ddr4-3200",
+            selected_components,
+        )
+        issues_by_level = {issue["level"]: issue for issue in result["issues"]}
+
+        self.assertEqual(
+            set(issues_by_level),
+            {"blocker", "warning", "information"},
+            "analysis distinguishes every public message level",
+        )
+        for level, issue in issues_by_level.items():
+            with self.subTest(level=level):
+                self.assertIsInstance(issue.get("message"), str)
+                self.assertTrue(issue["message"].strip(), f"{level} includes an explanation")
+        self.assertIn("socketu", issues_by_level["blocker"]["message"])
+        self.assertIn("RAM", issues_by_level["blocker"]["message"])
+
+        compatible_components = [
+            {"type": "cpu", "model": "core-i5-14600k"},
+            {"type": "motherboard", "model": "z790"},
+            {"type": "ram", "model": "ddr5-6000"},
+            {"type": "gpu", "model": "low-power-gpu"},
+            {"type": "disk", "model": "quiet-disk"},
+            {"type": "psu", "model": "psu-750"},
+            {"type": "cooling", "model": "quiet-cooling"},
+            {"type": "case", "model": "quiet-case"},
+        ]
+        compatible = analyse(
+            "core-i5-14600k",
+            "z790",
+            "ddr5-6000",
+            compatible_components,
+        )
+        self.assertEqual(compatible["status"], "compatible", "warnings and information do not block a build")
+        self.assertEqual(
+            {issue["level"] for issue in compatible["issues"]},
+            {"warning", "information"},
+            "a compatible build still exposes non-blocking message levels",
+        )
+
     def test_import_reports_every_product_and_import_count(self):
         payload = {
             "products": [
@@ -787,6 +844,33 @@ class BuilderSmokeTest(unittest.TestCase):
             self.assertIn("5742 PLN", page)
             self.assertIn("Konfiguracja zablokowana", page)
             self.assertIn("900 W | PSU: 750 W", page, "initial analysis renders the current power reserve")
+            rendered_levels = self.webdriver(
+                "POST", f"{base}/execute/sync",
+                {
+                    "script": "return [...document.querySelectorAll('#issue [data-level]')].map(item => ({level: item.dataset.level, text: item.textContent}))",
+                    "args": [],
+                },
+            )["value"]
+            self.assertEqual(
+                {item["level"] for item in rendered_levels},
+                {"blocker", "warning", "information"},
+                "analysis renders each message level in a separate element",
+            )
+            for item in rendered_levels:
+                with self.subTest(level=item["level"]):
+                    self.assertTrue(item["text"].strip(), "each rendered level keeps its explanation")
+            visible_labels = {
+                "blocker": "Blokada",
+                "warning": "Ostrzezenie",
+                "information": "Informacja",
+            }
+            for item in rendered_levels:
+                with self.subTest(label=item["level"]):
+                    self.assertIn(
+                        visible_labels[item["level"]],
+                        item["text"],
+                        "each analysis level has a visible label for the buyer",
+                    )
             self.webdriver(
                 "POST", f"{base}/execute/sync",
                 {"script": "const ram = document.querySelector('#ram'); ram.value = 'ram-2'; ram.dispatchEvent(new Event('change', {bubbles: true}));", "args": []},

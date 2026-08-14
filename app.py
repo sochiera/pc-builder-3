@@ -94,22 +94,20 @@ def analyse(
     cpu = CPUS[cpu_id]
     motherboard = MOTHERBOARDS[motherboard_id]
     issues = []
+    compatibility_reasons = []
     if cpu["socket"] != motherboard["socket"]:
-        issues.append({
-            "level": "blocker",
-            "message": f"Procesor wymaga socketu {cpu['socket']}, a plyta ma {motherboard['socket']}.",
-        })
+        compatibility_reasons.append(
+            f"procesor wymaga socketu {cpu['socket']}, a motherboard ma {motherboard['socket']}"
+        )
     standard = ram_standard(ram_id)
     if standard and standard not in motherboard["ram_standards"]:
-        issues.append({
-            "level": "blocker",
-            "message": f"RAM w standardzie {standard} nie jest obslugiwany przez motherboard {motherboard_id}.",
-        })
+        compatibility_reasons.append(
+            f"RAM w standardzie {standard} nie jest obslugiwany przez motherboard {motherboard_id}"
+        )
     if standard and standard not in cpu["ram_standards"]:
-        issues.append({
-            "level": "blocker",
-            "message": f"cpu {cpu_id} nie obsluguje RAM w standardzie {standard}.",
-        })
+        compatibility_reasons.append(
+            f"cpu {cpu_id} nie obsluguje RAM w standardzie {standard}"
+        )
     total = cpu["price"] + motherboard["price"]
     components = selected_components or [
         {"model": cpu_id},
@@ -124,11 +122,27 @@ def analyse(
             "level": "blocker",
             "message": f"Power: zestaw wymaga {power_required} W, a wybrany PSU zapewnia tylko {psu_power} W.",
         })
+    if compatibility_reasons:
+        issues.append({
+            "level": "blocker",
+            "message": "Blokada zgodnosci zestawu: " + "; ".join(compatibility_reasons) + ".",
+        })
+    if selected_components:
+        issues.extend([
+            {
+                "level": "warning",
+                "message": "Ostrzezenie: wybrany zestaw wymaga sprawdzenia wszystkich ofert i ich aktualnych cen.",
+            },
+            {
+                "level": "information",
+                "message": f"Informacja: analiza obejmuje {len(selected_components)} wybranych elementow zestawu.",
+            },
+        ])
     return {
         "cpu": cpu,
         "motherboard": motherboard,
         "total": total,
-        "status": "blocked" if issues else "compatible",
+        "status": "blocked" if any(issue["level"] == "blocker" for issue in issues) else "compatible",
         "issues": issues,
         "power_required": power_required,
         "psu_power": psu_power,
@@ -259,7 +273,7 @@ PAGE = """<!doctype html>
   <header><h1>Buduj PC</h1><p class='lead'>Sprawdz kompatybilnosc zestawu na biezaco.</p></header>
   <main>
     <section id='selectors'></section>
-    <section class='summary' aria-live='polite'><strong id='status'>Wybierz czesci...</strong><p id='total'></p><p id='power'></p><p id='issue'></p><ul id='build-products'></ul></section>
+    <section class='summary' aria-live='polite'><strong id='status'>Wybierz czesci...</strong><p id='total'></p><p id='power'></p><div id='issue'></div><ul id='build-products'></ul></section>
     <section class='summary'>
       <button id='import' type='button'>Importuj odpowiedz x-kom</button>
       <p id='import-status' aria-live='polite'></p>
@@ -271,8 +285,9 @@ PAGE = """<!doctype html>
     </section>
   </main>
   <script>
-    const requiredTypes = ['cpu', 'motherboard', 'ram', 'gpu', 'disk', 'psu', 'cooling', 'case'];
-    const typeNames = { cpu: 'Procesor', motherboard: 'Plyta glowna', ram: 'Pamiec RAM', gpu: 'Karta graficzna', disk: 'Dysk', psu: 'Zasilacz', cooling: 'Chlodzenie', case: 'Obudowa' };
+     const requiredTypes = ['cpu', 'motherboard', 'ram', 'gpu', 'disk', 'psu', 'cooling', 'case'];
+     const typeNames = { cpu: 'Procesor', motherboard: 'Plyta glowna', ram: 'Pamiec RAM', gpu: 'Karta graficzna', disk: 'Dysk', psu: 'Zasilacz', cooling: 'Chlodzenie', case: 'Obudowa' };
+     const issueLabels = { blocker: 'Blokada', warning: 'Ostrzezenie', information: 'Informacja' };
     let catalog = [];
     let buildCatalog = [];
     const preparedResponse = { products: [
@@ -331,7 +346,14 @@ PAGE = """<!doctype html>
       status.className = build.analysis.status === 'compatible' ? 'ok' : 'blocked';
       document.querySelector('#total').textContent = `Suma: ${build.total} PLN`;
       document.querySelector('#power').textContent = `Zapotrzebowanie: ${build.analysis.power_required} W | PSU: ${build.analysis.psu_power} W`;
-      document.querySelector('#issue').textContent = build.analysis.issues.map(issue => issue.message).join(' ');
+      const issueList = document.querySelector('#issue');
+      issueList.replaceChildren();
+       build.analysis.issues.forEach(issue => {
+         const item = document.createElement('p');
+         item.dataset.level = issue.level;
+         item.textContent = `${issueLabels[issue.level]}: ${issue.message}`;
+         issueList.append(item);
+       });
       const products = document.querySelector('#build-products');
       products.replaceChildren();
       build.products.forEach(id => {
