@@ -52,7 +52,7 @@ Jako kupujacy chce po kazdej zmianie zobaczyc, czy caly zestaw jest zgodny oraz 
 - Sprawdzenie: zmien zgodna plyte na model z innym socketem i sprawdz, ze ocena zestawu natychmiast zmienia sie na niezgodna z wyjasnieniem.
 - Poza zakresem: wydajnosc, cena i rekomendowanie zamiennikow.
 
-## US-007 — Uzytkownik rozroznia wage problemow [do weryfikacji]
+## US-007 — Uzytkownik rozroznia wage problemow [zrobiona]
 
 Jako kupujacy chce widziec osobno blokady, ostrzezenia i informacje z uzasadnieniem, zeby wiedziec, co musze poprawic, a co tylko rozwazyc.
 
