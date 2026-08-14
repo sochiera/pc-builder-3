@@ -52,6 +52,15 @@ Jako kupujacy chce przy rozpoznanym produkcie porownac oferte x-kom z oferta jed
 - Sprawdzenie: otworz przygotowany rozpoznany produkt z oferta x-kom i drugiego sklepu, porownaj widoczne ceny, a nastepnie otworz kazdy link i sprawdz, ze prowadzi do wlasciwej oferty.
 - Poza zakresem: kolejny sklep, koszt dostawy, automatyczne wyszukiwanie ofert i optymalizacja koszyka.
 
+## US-023 — Uzytkownik znajduje oferte w innym sklepie [nowa]
+
+Jako kupujacy chce wyszukac oferte innego sklepu dla rozpoznanego produktu, zeby porownanie nie bylo ograniczone do ofert dostarczonych podczas importu x-kom.
+
+- Dlaczego teraz: PROJECT.md przewiduje oferty innych sklepow dla rozpoznanych produktow, a US-017 potwierdzila jedynie obsluge juz przygotowanej oferty i nadal czeka na pelny dowod.
+- Sekcja briefu: Inne sklepy
+- Sprawdzenie: uruchom wyszukiwanie dla przygotowanego rozpoznanego produktu majacego poczatkowo tylko oferte x-kom i sprawdz, ze pojawia sie dopasowana oferta drugiego sklepu z jego nazwa, cena i linkiem.
+- Poza zakresem: nierozpoznane produkty, trzeci sklep, koszt dostawy, automatyczny harmonogram i optymalizacja koszyka.
+
 ## US-006 — Uzytkownik sprawdza kompatybilnosc zestawu [zrobiona]
 
 Jako kupujacy chce po kazdej zmianie zobaczyc, czy caly zestaw jest zgodny oraz dlaczego, zeby nie kupic czesci, ktorych nie da sie polaczyc.
