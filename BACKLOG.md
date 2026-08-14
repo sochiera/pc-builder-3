@@ -16,7 +16,7 @@ Jako opiekun katalogu chce zobaczyc, ze dwie oferty tego samego modelu zostaly p
 - Sprawdzenie: wczytaj dwie przygotowane oferty tego samego modelu z roznymi nazwami i sprawdz, ze widac jeden produkt z dwiema ofertami.
 - Poza zakresem: automatyczne rozstrzyganie niejednoznacznych dopasowan i laczenie calego historycznego katalogu.
 
-## US-003 — Uzytkownik przeglada katalog [do weryfikacji]
+## US-003 — Uzytkownik przeglada katalog [zrobiona]
 
 Jako kupujacy chce zobaczyc liste dostepnych czesci z typem, modelem i cena, zeby rozpoczac wybor bez znajomosci konkretnego produktu.
 
