@@ -1,4 +1,5 @@
 import json
+import re
 import subprocess
 import sys
 import time
@@ -831,6 +832,78 @@ class BuilderSmokeTest(unittest.TestCase):
                 self.assertIn("16 GB VRAM", comparison)
             with self.subTest("comparison marks the parameter difference"):
                 self.assertRegex(comparison.lower(), r"roznic|different|diff")
+            with self.subTest("gaming comparison shows usefulness ratings and price explanation"):
+                self.assertIn("Gaming", comparison, "comparison identifies the selected purpose")
+                self.assertGreaterEqual(comparison.count("95"), 2, "both GPUs show their Gaming usefulness rating")
+                self.assertRegex(
+                    comparison,
+                    r"2399 PLN.*3199 PLN|3199 PLN.*2399 PLN",
+                    "comparison explains the price difference between both GPUs",
+                )
+                self.assertRegex(
+                    comparison.lower(),
+                    r"roznic.*(?:cena|800)|(?:cena|800).*roznic",
+                    "comparison explains why the higher price matters",
+                )
+            comparison_details = self.webdriver(
+                "POST",
+                f"{base}/execute/sync",
+                {
+                    "script": "return {cards: [...document.querySelectorAll('#comparison > section')].map(card => card.textContent), explanations: [...document.querySelectorAll('#comparison > p')].map(paragraph => paragraph.textContent)}",
+                    "args": [],
+                },
+            )["value"]
+            with self.subTest("each GPU has a distinct usefulness rating"):
+                self.assertEqual(len(comparison_details["cards"]), 2, "comparison renders one card per selected GPU")
+                ratings = []
+                for card in comparison_details["cards"]:
+                    match = re.search(r"Przydatnosc dla Gaming: (\d+)/100", card)
+                    self.assertIsNotNone(match, "each GPU card includes its Gaming usefulness rating")
+                    ratings.append(match.group(1))
+                self.assertNotEqual(ratings[0], ratings[1], "GPU usefulness ratings explain a real difference")
+            with self.subTest("explanation identifies the usefulness of each GPU"):
+                for gpu_name in ("GeForce RTX 4070", "GeForce RTX 4080"):
+                    self.assertTrue(
+                        any(gpu_name in explanation for explanation in comparison_details["explanations"]),
+                        f"comparison explains the usefulness of {gpu_name}",
+                    )
+            self.webdriver(
+                "POST",
+                f"{base}/execute/sync",
+                {
+                    "script": "const purpose = document.querySelector('#purpose'); purpose.value = 'programming'; purpose.dispatchEvent(new Event('change', {bubbles: true}));",
+                    "args": [],
+                },
+            )
+            for _ in range(20):
+                programming_comparison = self.webdriver(
+                    "POST", f"{base}/execute/sync", {"script": "return document.querySelector('#comparison')?.textContent || ''", "args": []}
+                )["value"]
+                if "Programowanie" in programming_comparison and programming_comparison != comparison:
+                    break
+                time.sleep(0.1)
+            with self.subTest("changing purpose refreshes comparison ratings and explanation"):
+                self.assertIn("Programowanie", programming_comparison, "comparison updates to the selected purpose")
+                self.assertGreaterEqual(programming_comparison.count("45"), 2, "both GPUs show their Programming usefulness rating")
+                self.assertNotEqual(programming_comparison, comparison, "purpose change refreshes the comparison explanation")
+            programming_details = self.webdriver(
+                "POST",
+                f"{base}/execute/sync",
+                {
+                    "script": "return {cards: [...document.querySelectorAll('#comparison > section')].map(card => card.textContent), explanations: [...document.querySelectorAll('#comparison > p')].map(paragraph => paragraph.textContent)}",
+                    "args": [],
+                },
+            )["value"]
+            with self.subTest("purpose change updates both GPU cards"):
+                self.assertEqual(len(programming_details["cards"]), 2, "comparison keeps one card per selected GPU")
+                for card in programming_details["cards"]:
+                    self.assertRegex(card, r"Przydatnosc dla Programowanie: 45/100")
+            with self.subTest("purpose change updates both GPU explanations"):
+                for gpu_name in ("GeForce RTX 4070", "GeForce RTX 4080"):
+                    self.assertTrue(
+                        any(gpu_name in explanation and "Programowanie" in explanation for explanation in programming_details["explanations"]),
+                        f"comparison updates the usefulness explanation for {gpu_name}",
+                    )
         finally:
             if "session_id" in locals():
                 try:

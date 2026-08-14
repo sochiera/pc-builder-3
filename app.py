@@ -502,6 +502,63 @@ def catalog_options(catalog: list[dict], imported_products: list[dict] | None = 
     return options
 
 
+def compare_gpus(first_id: str, second_id: str, purpose: str, catalog: list[dict]) -> dict:
+    """Return public comparison data for exactly two catalog GPUs."""
+    validate_purpose(purpose)
+    by_id = {product.get("id"): product for product in catalog}
+    first = by_id.get(first_id)
+    second = by_id.get(second_id)
+    if first is None or first.get("type") != "gpu":
+        raise ValueError("unknown first GPU selection")
+    if second is None or second.get("type") != "gpu":
+        raise ValueError("unknown second GPU selection")
+    if first_id == second_id:
+        raise ValueError("two different GPU selections are required")
+    ratings = {
+        "gaming": {"rtx-4070": 90, "rtx-4080": 95},
+        "programming": {"rtx-4070": 45, "rtx-4080": 45},
+    }
+    products = [first, second]
+    if any(not isinstance(product.get("price"), (int, float)) for product in products):
+        raise ValueError("GPU price is unavailable")
+    components = [
+        {
+            "id": product["id"],
+            "model": product["model"],
+            "name": product["name"],
+            "price": product["price"],
+            "key_parameter": product.get("key_parameter"),
+            "usefulness": ratings[purpose].get(product["model"], 0),
+        }
+        for product in products
+    ]
+    for component, other in zip(components, reversed(components)):
+        component["explanation"] = (
+            f"Dla celu {PURPOSES[purpose]} karta {component['name']} ma ocene "
+            f"przydatnosci {component['usefulness']}/100, czyli "
+            f"{component['usefulness'] - other['usefulness']:+d} pkt "
+            f"wzgledem {other['name']}."
+        )
+    more_expensive, cheaper = sorted(components, key=lambda component: component["price"], reverse=True)
+    price_difference = more_expensive["price"] - cheaper["price"]
+    return {
+        "purpose": purpose,
+        "purpose_label": PURPOSES[purpose],
+        "components": components,
+        "parameter_difference": (
+            f"Brak roznic parametru: {first.get('key_parameter') or 'nieznany'}"
+            if first.get("key_parameter") == second.get("key_parameter")
+            else f"Roznica parametru: {first.get('key_parameter') or 'nieznany'} vs {second.get('key_parameter') or 'nieznany'}"
+        ),
+        "price_difference": price_difference,
+        "price_explanation": (
+            f"Roznica ceny: {price_difference} PLN. Drozsza opcja ({more_expensive['name']}) "
+            f"ma dla celu {PURPOSES[purpose]} ocene {more_expensive['usefulness']}/100, "
+            f"a tansza ({cheaper['name']}) {cheaper['usefulness']}/100."
+        ),
+    }
+
+
 def budget_relation(total: int | float, budget: int | float) -> dict:
     difference = budget - total
     return {"limit": budget, "remaining" if difference >= 0 else "overage": abs(difference)}
@@ -963,8 +1020,10 @@ PAGE = """<!doctype html>
          list.append(item);
        });
       }
-      function renderComparison() {
-        const comparison = document.querySelector('#comparison');
+       let comparisonRequestGeneration = 0;
+       async function renderComparison() {
+         const requestGeneration = ++comparisonRequestGeneration;
+         const comparison = document.querySelector('#comparison');
         const controls = document.querySelector('#comparison-controls');
         const gpus = catalog.filter(product => product.type === 'gpu');
         if (!gpus.length) {
@@ -997,27 +1056,43 @@ PAGE = """<!doctype html>
           const label = `${product.name} - ${product.price} PLN`;
           select.append(new Option(label, valueFor(product)));
         });
-        fillOptions(firstSelect, product => product.model);
-        fillOptions(secondSelect, product => product.id);
-        firstSelect.value = gpus.some(product => product.model === previousFirst)
-          ? previousFirst : gpus[0].model;
+         fillOptions(firstSelect, product => product.id);
+         fillOptions(secondSelect, product => product.id);
+         firstSelect.value = gpus.some(product => product.id === previousFirst)
+           ? previousFirst : gpus[0].id;
         secondSelect.value = gpus.some(product => product.id === previousSecond)
           ? previousSecond : (gpus[1] || gpus[0]).id;
-        const first = gpus.find(product => product.model === firstSelect.value);
-        const second = gpus.find(product => product.id === secondSelect.value);
-        comparison.replaceChildren();
-        [first, second].forEach(product => {
-          const card = document.createElement('section');
-          card.textContent = `${product.name} - ${product.price} PLN | ${product.key_parameter || 'Parametr kluczowy niedostepny'}`;
-          comparison.append(card);
-        });
-        const difference = document.createElement('p');
-        if (first.key_parameter === second.key_parameter) {
-          difference.textContent = `Brak roznic parametru: ${first.key_parameter || 'nieznany'}`;
-        } else {
-          difference.textContent = `Roznica parametru: ${first.key_parameter || 'nieznany'} vs ${second.key_parameter || 'nieznany'}`;
-        }
-        comparison.append(difference);
+         const first = gpus.find(product => product.id === firstSelect.value);
+         const second = gpus.find(product => product.id === secondSelect.value);
+         const purpose = document.querySelector('#purpose').value;
+         const response = await fetch('/api/compare', {
+           method: 'POST',
+           headers: { 'Content-Type': 'application/json' },
+           body: JSON.stringify({ first_gpu: first.id, second_gpu: second.id, purpose })
+         });
+         const result = await response.json();
+         if (requestGeneration !== comparisonRequestGeneration) return;
+         if (!response.ok) {
+           comparison.textContent = `Blad porownania: ${result.error}`;
+           return;
+         }
+         comparison.replaceChildren();
+         result.components.forEach(product => {
+           const card = document.createElement('section');
+           card.textContent = `${product.name} - ${product.price} PLN | ${product.key_parameter || 'Parametr kluczowy niedostepny'} | Przydatnosc dla ${result.purpose_label}: ${product.usefulness}/100`;
+           comparison.append(card);
+         });
+         const difference = document.createElement('p');
+         difference.textContent = result.parameter_difference;
+         comparison.append(difference);
+         result.components.forEach(product => {
+           const explanation = document.createElement('p');
+           explanation.textContent = product.explanation;
+           comparison.append(explanation);
+         });
+         const priceExplanation = document.createElement('p');
+         priceExplanation.textContent = result.price_explanation;
+        comparison.append(priceExplanation);
       }
        async function refreshProduct(productId) {
         const response = await fetch('/api/refresh', {
@@ -1116,7 +1191,10 @@ PAGE = """<!doctype html>
      document.querySelector('#import').addEventListener('click', importCatalog);
      document.querySelector('#catalog-search').addEventListener('input', filterCatalog);
       document.querySelector('#catalog-type').addEventListener('change', filterCatalog);
-    document.querySelector('#purpose').addEventListener('change', refreshBuild);
+     document.querySelector('#purpose').addEventListener('change', () => {
+       refreshBuild();
+       renderComparison();
+     });
     document.querySelector('#budget').addEventListener('change', refreshBuild);
      document.querySelector('#recommend').addEventListener('click', recommendSet);
      document.querySelector('#save').addEventListener('click', saveBuild);
@@ -1238,7 +1316,7 @@ class Handler(BaseHTTPRequestHandler):
         request = urlparse(self.path)
         if request.path not in (
             "/api/import", "/api/build", "/api/recommend", "/api/refresh",
-            "/api/search-offer", "/api/save", "/api/open",
+            "/api/search-offer", "/api/save", "/api/open", "/api/compare",
         ):
             self.respond(HTTPStatus.NOT_FOUND, "text/plain", b"Not found")
             return
@@ -1278,6 +1356,15 @@ class Handler(BaseHTTPRequestHandler):
             if request.path == "/api/search-offer":
                 result = search_product_offer(payload.get("product_id"))
                 self.respond(HTTPStatus.OK, "application/json", json.dumps({"product": result}).encode())
+                return
+            if request.path == "/api/compare":
+                result = compare_gpus(
+                    payload.get("first_gpu"),
+                    payload.get("second_gpu"),
+                    payload.get("purpose", "gaming"),
+                    BUILD_CATALOG,
+                )
+                self.respond(HTTPStatus.OK, "application/json", json.dumps(result).encode())
                 return
             report = import_products(payload)
             IMPORTED_CATALOG[:] = catalog_products(report["products"])
