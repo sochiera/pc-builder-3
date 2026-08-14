@@ -2,6 +2,7 @@
 """Minimal vertical slice for the PC builder."""
 
 import argparse
+from datetime import datetime, timezone
 import itertools
 import json
 import math
@@ -47,6 +48,21 @@ BUILDER_ONLY_OPTIONS = {
 
 CASES = {
     "regnum-400": {"name": "Endorfy Regnum 400 ARGB", "price": 299},
+}
+
+REFRESHED_PRICES = {
+    "ryzen-5-7600": 749,
+    "core-i5-14600k": 1199,
+    "b650": 679,
+    "z790": 829,
+    "ddr5-6000": 479,
+    "rtx-4070": 2299,
+    "nvme-1tb": 379,
+    "psu-750": 429,
+    "psu-900": 429,
+    "fortis-5": 189,
+    "compatible-cooling": 189,
+    "regnum-400": 279,
 }
 
 COMPONENTS = {
@@ -330,6 +346,31 @@ def catalog_products(products: list[dict]) -> list[dict]:
             "offers": priced_offers,
         })
     return catalog
+
+
+def refresh_product(product_id: str) -> dict:
+    """Refresh one imported product while preserving its recognized identity."""
+    product = next((item for item in IMPORTED_CATALOG if item["model"] == product_id), None)
+    if product is None:
+        raise ValueError("unknown product")
+    if product_id not in REFRESHED_PRICES:
+        raise ValueError("unsupported product")
+    checked_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    refreshed_price = REFRESHED_PRICES[product_id]
+    for offer in product["offers"]:
+        offer["price"] = refreshed_price
+        offer["checked_at"] = checked_at
+    product["price"] = refreshed_price
+    product["last_checked"] = checked_at
+    return product
+
+
+def sync_build_catalog_product(product: dict) -> None:
+    """Keep build calculations aligned with a refreshed imported product."""
+    for option in BUILD_CATALOG:
+        if option.get("model") == product["id"]:
+            option["price"] = product["price"]
+            option["offers"] = product["offers"]
 
 
 def catalog_options(catalog: list[dict], imported_products: list[dict] | None = None) -> list[dict]:
@@ -653,9 +694,14 @@ PAGE = """<!doctype html>
       function renderCatalog(products) {
         const list = document.querySelector('#catalog-products');
         list.replaceChildren();
-       products.forEach(product => {
+        products.forEach(product => {
           const item = document.createElement('li');
           item.textContent = `${product.type} - ${product.model} - ${product.price} PLN`;
+          const refresh = document.createElement('button');
+          refresh.type = 'button';
+          refresh.textContent = 'Odswiez ceny';
+          refresh.addEventListener('click', () => refreshProduct(product.model));
+          item.append(document.createTextNode(' '), refresh);
           (product.offers || []).forEach(offer => {
             const details = document.createTextNode(` ${offer.name} - ${offer.price} PLN `);
             if (offer.url) {
@@ -668,10 +714,41 @@ PAGE = """<!doctype html>
               item.append(details, document.createTextNode(offer.source));
             }
           });
+          if (product.last_checked) {
+            item.append(document.createTextNode(` Sprawdzono: ${product.last_checked}`));
+          }
           list.append(item);
         });
       }
-     function filterCatalog() {
+      async function refreshProduct(productId) {
+        const response = await fetch('/api/refresh', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ product_id: productId })
+        });
+         const report = await response.json();
+         if (!response.ok) return;
+         const selectedValues = Object.fromEntries(
+           requiredTypes
+             .map(type => [type, document.querySelector(`#${type}`)?.value])
+             .filter(([, value]) => value)
+         );
+         catalog = catalog.map(product => product.model === report.product.model ? report.product : product);
+         buildCatalog = buildCatalog.map(product => product.model === report.product.model
+           ? { ...product, price: report.product.price, offers: report.product.offers }
+           : product);
+         renderSelectors(buildCatalog);
+         requiredTypes.forEach(type => {
+           const select = document.querySelector(`#${type}`);
+           const selectedValue = selectedValues[type];
+           if (select && selectedValue && [...select.options].some(option => option.value === selectedValue)) {
+             select.value = selectedValue;
+           }
+         });
+         filterCatalog();
+         await refreshBuild();
+       }
+      function filterCatalog() {
        const fragment = document.querySelector('#catalog-search').value.trim().toLowerCase();
        const selectedType = document.querySelector('#catalog-type').value;
        const matches = product => {
@@ -760,7 +837,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         request = urlparse(self.path)
-        if request.path not in ("/api/import", "/api/build", "/api/recommend"):
+        if request.path not in ("/api/import", "/api/build", "/api/recommend", "/api/refresh"):
             self.respond(HTTPStatus.NOT_FOUND, "text/plain", b"Not found")
             return
         try:
@@ -782,6 +859,11 @@ class Handler(BaseHTTPRequestHandler):
                     payload.get("budget"),
                 )
                 self.respond(HTTPStatus.OK, "application/json", json.dumps(result).encode())
+                return
+            if request.path == "/api/refresh":
+                result = refresh_product(payload.get("product_id"))
+                sync_build_catalog_product(result)
+                self.respond(HTTPStatus.OK, "application/json", json.dumps({"product": result}).encode())
                 return
             report = import_products(payload)
             IMPORTED_CATALOG[:] = catalog_products(report["products"])

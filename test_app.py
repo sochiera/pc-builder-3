@@ -230,7 +230,7 @@ class BuilderSmokeTest(unittest.TestCase):
                 "POST",
                 f"{base}/execute/sync",
                 {
-                    "script": "return [...document.querySelectorAll('#catalog-products li')].map(item => item.textContent)",
+                    "script": "return [...document.querySelectorAll('#catalog-products li')].map(item => { const copy = item.cloneNode(true); copy.querySelector('button')?.remove(); return copy.textContent.replace(/\\s+/g, ' ').trim() })",
                     "args": [],
                 },
             )["value"]
@@ -255,7 +255,7 @@ class BuilderSmokeTest(unittest.TestCase):
                 "POST",
                 f"{base}/execute/sync",
                 {
-                    "script": "return [...document.querySelectorAll('#catalog-products li')].map(item => item.textContent)",
+                    "script": "return [...document.querySelectorAll('#catalog-products li')].map(item => { const copy = item.cloneNode(true); copy.querySelector('button')?.remove(); return copy.textContent.replace(/\\s+/g, ' ').trim() })",
                     "args": [],
                 },
             )["value"]
@@ -476,6 +476,123 @@ class BuilderSmokeTest(unittest.TestCase):
             self.assertEqual(changed_build["products"], 0, "catalog refresh clears the build when a required type has no options")
             self.assertNotIn("6342 PLN", changed_build["summary"], "catalog refresh clears the stale build summary")
             self.assertNotIn(selected_before_refresh["cpu"], changed_build["cpuOptions"], "unavailable CPU is absent from the refreshed selector")
+        finally:
+            if 'session_id' in locals():
+                try:
+                    self.webdriver("DELETE", f"/session/{session_id}")
+                except OSError:
+                    pass
+            driver_process.terminate()
+            driver_process.wait(timeout=3)
+            app_process.terminate()
+            app_process.wait(timeout=3)
+
+    def test_buyer_can_refresh_selected_product_offer_price(self):
+        with socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            app_port = listener.getsockname()[1]
+        with socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            self.webdriver_port = listener.getsockname()[1]
+        app_process = subprocess.Popen([sys.executable, "app.py", "--port", str(app_port)], cwd=ROOT)
+        driver_process = subprocess.Popen(
+            ["geckodriver", "--port", str(self.webdriver_port)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            for _ in range(20):
+                try:
+                    with urlopen(f"http://127.0.0.1:{self.webdriver_port}/status", timeout=0.2):
+                        break
+                except OSError:
+                    time.sleep(0.1)
+            else:
+                self.skipTest("geckodriver is unavailable")
+            session = self.webdriver("POST", "/session", {"capabilities": {"alwaysMatch": {"browserName": "firefox"}}})
+            session_id = session["value"]["sessionId"]
+            base = f"/session/{session_id}"
+            self.webdriver("POST", f"{base}/url", {"url": f"http://127.0.0.1:{app_port}/"})
+            self.webdriver("POST", f"{base}/execute/sync", {"script": "document.querySelector('#import').click()", "args": []})
+            for _ in range(20):
+                status = self.webdriver(
+                    "POST",
+                    f"{base}/execute/sync",
+                    {"script": "return document.querySelector('#import-status').textContent", "args": []},
+                )["value"]
+                if status == "Zaimportowano: 8":
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail("prepared import did not finish")
+            self.webdriver(
+                "POST",
+                f"{base}/execute/sync",
+                {
+                    "script": """
+                        window.__refreshBodies = [];
+                        window.__refreshProducts = [];
+                        const originalFetch = window.fetch;
+                        window.fetch = async (...args) => {
+                          if (args[0] === '/api/refresh') window.__refreshBodies.push(JSON.parse(args[1].body));
+                          const response = await originalFetch(...args);
+                          if (args[0] === '/api/refresh') window.__refreshProducts.push((await response.clone().json()).product);
+                          return response;
+                        };
+                    """,
+                    "args": [],
+                },
+            )
+            buttons = self.webdriver(
+                "POST",
+                f"{base}/execute/sync",
+                {"script": "return document.querySelectorAll('#catalog-products li button').length", "args": []},
+            )["value"]
+            self.assertGreater(buttons, 0, "prepared catalog product exposes a price refresh action")
+            self.webdriver(
+                "POST",
+                f"{base}/execute/sync",
+                {"script": "document.querySelector('#catalog-products li button').click()", "args": []},
+            )
+            for _ in range(20):
+                refreshed = self.webdriver(
+                    "POST",
+                    f"{base}/execute/sync",
+                    {"script": "return document.querySelector('#catalog-products li').textContent", "args": []},
+                )["value"]
+                if "749 PLN" in refreshed and "Sprawdzono:" in refreshed:
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail(f"refreshed price and check time did not render: {refreshed}")
+            total = self.webdriver(
+                "POST",
+                f"{base}/execute/sync",
+                {"script": "return document.querySelector('#total').textContent", "args": []},
+            )["value"]
+            self.assertEqual(total, "Suma: 5692 PLN", "build summary uses the refreshed offer price")
+            refresh_request = self.webdriver(
+                "POST",
+                f"{base}/execute/sync",
+                {"script": "return window.__refreshBodies[0]", "args": []},
+            )["value"]
+            self.assertEqual(refresh_request, {"product_id": "ryzen-5-7600"}, "refresh targets the selected recognized product")
+            self.assertIn("ryzen-5-7600", refreshed, "refreshed offer remains attached to the recognized product")
+            self.assertIn("x-kom", refreshed, "refreshed offer remains visible with its source")
+            self.assertIn("prepared-shop", refreshed, "second refreshed offer remains visible with its source")
+            self.assertIn("749 PLN", refreshed, "successful refresh renders the current offer price")
+            self.assertGreaterEqual(refreshed.count("749 PLN"), 3, "product and both refreshed offers show the current price")
+            self.assertRegex(refreshed, r"Sprawdzono:\s*\S+", "successful refresh renders the last-check time")
+            refreshed_product = self.webdriver(
+                "POST",
+                f"{base}/execute/sync",
+                {"script": "return window.__refreshProducts[0]", "args": []},
+            )["value"]
+            self.assertEqual(
+                [(offer["source"], offer["price"], bool(offer.get("checked_at"))) for offer in refreshed_product["offers"]],
+                [("x-kom", 749, True), ("prepared-shop", 749, True)],
+                "refresh updates price and check time for every offer without changing its source",
+            )
         finally:
             if 'session_id' in locals():
                 try:
