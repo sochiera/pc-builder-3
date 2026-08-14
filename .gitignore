@@ -1,2 +1,4 @@
 __pycache__/
 *.py[cod]
+.pc-builder-saves.json
+.pc-builder-saves.tmp

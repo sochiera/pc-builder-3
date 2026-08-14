@@ -659,7 +659,12 @@ class BuilderSmokeTest(unittest.TestCase):
                         "args": [],
                     },
                 )["value"]
-                if state["firstTag"] and state["secondTag"]:
+                if (
+                    state["firstTag"]
+                    and state["secondTag"]
+                    and any("GeForce RTX 4070" in option for option in state["firstOptions"])
+                    and any("GeForce RTX 4080" in option for option in state["secondOptions"])
+                ):
                     break
                 time.sleep(0.1)
             comparison_controls = state
@@ -2188,6 +2193,240 @@ class BuilderSmokeTest(unittest.TestCase):
             driver_process.wait(timeout=3)
             app_process.terminate()
             app_process.wait(timeout=3)
+
+    def test_buyer_can_save_and_reopen_build_after_application_restart(self):
+        selections = {
+            "cpu": "cpu-1",
+            "motherboard": "motherboard-1",
+            "ram": "ram-1",
+            "gpu": "gpu-1",
+            "disk": "disk-1",
+            "psu": "psu-1",
+            "cooling": "cooling-1",
+            "case": "case-1",
+        }
+        payload = {"selections": selections, "purpose": "programming", "budget": 7000}
+
+        def request(port, path, body):
+            request = Request(
+                f"http://127.0.0.1:{port}{path}",
+                data=json.dumps(body).encode(),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            try:
+                with urlopen(request) as response:
+                    return response.status, json.load(response)
+            except HTTPError as error:
+                body = error.read() if error.readable() else b""
+                try:
+                    return error.code, json.loads(body)
+                except json.JSONDecodeError:
+                    return error.code, {}
+
+        def start_app(port):
+            process = subprocess.Popen([sys.executable, "app.py", "--port", str(port)], cwd=ROOT)
+            for _ in range(20):
+                try:
+                    with urlopen(f"http://127.0.0.1:{port}/", timeout=0.2):
+                        return process
+                except OSError:
+                    time.sleep(0.1)
+            process.terminate()
+            process.wait(timeout=3)
+            self.fail("application did not start")
+
+        with socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            port = listener.getsockname()[1]
+        process = start_app(port)
+        try:
+            import_status, _ = request(
+                port,
+                "/api/import",
+                {"products": [
+                    {"id": "cpu-offer", "model": "ryzen-5-7600", "name": "AMD Ryzen 5 7600", "price": 799},
+                    {"id": "board-offer", "model": "b650", "name": "MSI B650 Gaming Plus WiFi", "price": 699},
+                    {"id": "ram-offer", "model": "ddr5-6000", "name": "Kingston Fury DDR5 32 GB", "price": 499},
+                    {"id": "gpu-offer", "model": "rtx-4070", "name": "GeForce RTX 4070", "price": 2399},
+                    {"id": "disk-offer", "model": "nvme-1tb", "name": "Samsung 990 EVO 1 TB", "price": 399},
+                    {"id": "psu-offer", "model": "psu-750", "name": "be quiet! Pure Power 12 M 750W", "price": 449},
+                    {"id": "cooler-offer", "model": "fortis-5", "name": "Endorfy Fortis 5", "price": 199},
+                    {"id": "case-offer", "model": "regnum-400", "name": "Endorfy Regnum 400 ARGB", "price": 299},
+                ]},
+            )
+            self.assertEqual(import_status, 200, "prepared catalog is available for the saved build summary")
+            build_status, saved_build = request(port, "/api/build", payload)
+            self.assertEqual(build_status, 200, "the selected build can be summarized before saving")
+            self.assertEqual(saved_build.get("products"), list(selections.values()), "summary contains the selected parts")
+            self.assertEqual(saved_build.get("purpose"), "programming", "summary preserves the selected purpose")
+            self.assertEqual(saved_build.get("budget", {}).get("limit"), 7000, "summary preserves the selected budget")
+            saved_total = saved_build.get("total")
+            self.assertIsInstance(saved_total, (int, float), "summary exposes the current total price")
+            save_status, saved = request(port, "/api/save", payload)
+            self.assertEqual(save_status, 200, "saving a complete build succeeds")
+            self.assertIsInstance(saved.get("save_id"), str, "save returns a stable save identifier")
+            self.assertTrue(saved["save_id"], "save identifier is not empty")
+            save_id = saved["save_id"]
+        finally:
+            process.terminate()
+            process.wait(timeout=3)
+
+        process = start_app(port)
+        driver_process = None
+        try:
+            with urlopen(f"http://127.0.0.1:{port}/api/catalog") as response:
+                changed_catalog = json.load(response)
+            for product in changed_catalog["products"]:
+                if product["model"] == "ryzen-5-7600":
+                    product["price"] += 100
+                    break
+            changed_catalog["products"].append(
+                {
+                    "id": "independent-cpu-offer",
+                    "model": "core-i5-14600k",
+                    "name": "Intel Core i5-14600K",
+                    "price": 1249,
+                }
+            )
+            changed_import_status, _ = request(
+                port,
+                "/api/import",
+                {"products": changed_catalog["products"]},
+            )
+            self.assertEqual(changed_import_status, 200, "catalog price can change after saving and before opening")
+            with urlopen(f"http://127.0.0.1:{port}/") as response:
+                page = response.read().decode()
+            self.assertIn("id='save'", page, "configurator exposes an action for saving the current build")
+            self.assertIn("id='open'", page, "configurator exposes an action for opening a saved build")
+            self.assertIn("/api/save", page, "save action is wired to the public save endpoint")
+            self.assertIn("/api/open", page, "open action is wired to the public open endpoint")
+            self.assertIn("id='save-status'", page, "configurator exposes the result of restoring a saved build")
+
+            with socket() as listener:
+                listener.bind(("127.0.0.1", 0))
+                self.webdriver_port = listener.getsockname()[1]
+            driver_process = subprocess.Popen(
+                ["geckodriver", "--port", str(self.webdriver_port)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            for _ in range(20):
+                try:
+                    with urlopen(f"http://127.0.0.1:{self.webdriver_port}/status", timeout=0.2):
+                        break
+                except OSError:
+                    time.sleep(0.1)
+            else:
+                self.skipTest("geckodriver is unavailable")
+            session = self.webdriver("POST", "/session", {"capabilities": {"alwaysMatch": {"browserName": "firefox"}}})
+            session_id = session["value"]["sessionId"]
+            base = f"/session/{session_id}"
+            self.webdriver("POST", f"{base}/url", {"url": f"http://127.0.0.1:{port}/"})
+            self.webdriver(
+                "POST",
+                f"{base}/execute/sync",
+                {"script": "document.querySelector('#save-id').value = arguments[0];", "args": [save_id]},
+            )
+            open_button = self.webdriver("POST", f"{base}/element", {"using": "css selector", "value": "#open"})
+            self.webdriver("POST", f"{base}/element/{open_button['value']['element-6066-11e4-a52e-4f735466cecf']}/click", {})
+            for _ in range(20):
+                restored_status = self.webdriver(
+                    "POST", f"{base}/execute/sync", {"script": "return document.querySelector('#save-status').textContent", "args": []}
+                )["value"]
+                if restored_status.startswith("Otworzono zestaw:"):
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail(f"opening a saved build did not render in the configurator: {restored_status!r}")
+            restored_ui = self.webdriver(
+                "POST",
+                f"{base}/execute/sync",
+                {
+                    "script": """
+                        return {
+                            selections: Object.fromEntries([...document.querySelectorAll('#selectors select')].map(select => [select.id, select.value])),
+                            purpose: document.querySelector('#purpose').value,
+                            budget: document.querySelector('#budget').value,
+                            total: document.querySelector('#total').textContent,
+                            products: document.querySelector('#build-products').textContent
+                        };
+                    """,
+                    "args": [],
+                },
+            )["value"]
+            self.assertEqual(restored_ui["selections"], selections, "open action restores the selected parts in the configurator")
+            self.assertEqual(restored_ui["purpose"], "programming", "open action restores the purpose in the configurator")
+            self.assertEqual(restored_ui["budget"], "7000", "open action restores the budget in the configurator")
+            self.assertIn(f"{saved_total} PLN", restored_ui["total"], "open action renders the restored current total")
+            self.assertTrue(restored_ui["products"], "open action renders the restored build products")
+
+            self.webdriver(
+                "POST",
+                f"{base}/execute/sync",
+                {
+                    "script": """
+                        window.__saveBodies = [];
+                        const previousFetch = window.fetch;
+                        window.fetch = async (...args) => {
+                            if (args[0] === '/api/save') window.__saveBodies.push(JSON.parse(args[1].body));
+                            return previousFetch(...args);
+                        };
+                    """,
+                    "args": [],
+                },
+            )
+            save_button = self.webdriver("POST", f"{base}/element", {"using": "css selector", "value": "#save"})
+            self.webdriver("POST", f"{base}/element/{save_button['value']['element-6066-11e4-a52e-4f735466cecf']}/click", {})
+            for _ in range(20):
+                saved_ui_status = self.webdriver(
+                    "POST", f"{base}/execute/sync", {"script": "return document.querySelector('#save-status').textContent", "args": []}
+                )["value"]
+                if saved_ui_status.startswith("Zapisano zestaw:"):
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail(f"saving from the configurator did not render a result: {saved_ui_status!r}")
+            saved_ui_payload = self.webdriver(
+                "POST", f"{base}/execute/sync", {"script": "return window.__saveBodies[0]", "args": []}
+            )["value"]
+            self.assertEqual(saved_ui_payload, payload, "save action sends the complete current build to the public endpoint")
+
+            open_status, opened = request(port, "/api/open", {"save_id": save_id})
+            self.assertEqual(open_status, 200, "saved build can be opened after restart")
+            self.assertEqual(set(opened), {"save_id", "selections", "purpose", "budget"}, "open response has the public contract shape")
+            self.assertNotIn("catalog", opened, "open response does not expose or restore unrelated catalog data")
+            with urlopen(f"http://127.0.0.1:{port}/api/catalog") as response:
+                catalog_after_open = json.load(response)
+            self.assertIn(
+                "core-i5-14600k",
+                [product["model"] for product in catalog_after_open["products"]],
+                "opening a build preserves an independent current catalog offer",
+            )
+            self.assertEqual(opened.get("selections"), selections, "reopened build restores every selected part")
+            self.assertEqual(opened.get("purpose"), "programming", "reopened build restores its purpose")
+            self.assertEqual(opened.get("budget"), 7000, "reopened build restores its budget")
+            reopened_status, reopened_build = request(
+                port,
+                "/api/build",
+                {"selections": opened["selections"], "purpose": opened["purpose"], "budget": opened["budget"]},
+            )
+            self.assertEqual(reopened_status, 200, "reopened selections can be summarized")
+            self.assertEqual(reopened_build.get("products"), list(selections.values()), "reopened summary contains the same parts")
+            self.assertEqual(reopened_build.get("purpose"), "programming", "reopened summary preserves the purpose")
+            self.assertEqual(reopened_build.get("budget", {}).get("limit"), 7000, "reopened summary preserves the budget")
+            self.assertEqual(reopened_build.get("total"), saved_total, "reopened summary preserves the total price")
+        finally:
+            if "session_id" in locals():
+                try:
+                    self.webdriver("DELETE", f"/session/{session_id}")
+                except OSError:
+                    pass
+            if driver_process is not None:
+                driver_process.terminate()
+                driver_process.wait(timeout=3)
+            process.terminate()
+            process.wait(timeout=3)
 
 
 if __name__ == "__main__":

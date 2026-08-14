@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 import itertools
 import json
 import math
+from pathlib import Path
+import uuid
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
@@ -84,6 +86,7 @@ COMPONENTS_BY_TYPE = {
     for component_type, components in COMPONENTS.items()
 }
 REQUIRED_TYPES = tuple(COMPONENTS)
+SAVES_PATH = Path(__file__).with_name(".pc-builder-saves.json")
 POWER_REQUIREMENTS = {
     "ryzen-5-7600": 105,
     "core-i5-14600k": 181,
@@ -145,6 +148,64 @@ def validate_budget(budget: int | float) -> int | float:
     ):
         raise ValueError("budget must be a non-negative number")
     return budget
+
+
+def load_saves() -> dict:
+    if not SAVES_PATH.exists():
+        return {}
+    with SAVES_PATH.open(encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def persist_saves(saves: dict) -> None:
+    temporary_path = SAVES_PATH.with_suffix(".tmp")
+    with temporary_path.open("w", encoding="utf-8") as handle:
+        json.dump(saves, handle)
+    temporary_path.replace(SAVES_PATH)
+
+
+def save_configuration(payload: dict) -> dict:
+    selections = payload.get("selections")
+    if not isinstance(selections, dict) or set(selections) != set(REQUIRED_TYPES):
+        raise ValueError("one selection is required for each component type")
+    if any(not isinstance(value, str) or not value for value in selections.values()):
+        raise ValueError("each selection must be a non-empty string")
+    options_by_id = {option.get("id"): option for option in BUILD_CATALOG}
+    if any(
+        selections[component_type] not in options_by_id
+        or options_by_id[selections[component_type]].get("type") != component_type
+        for component_type in REQUIRED_TYPES
+    ):
+        raise ValueError("each selection must identify an available component of its type")
+    purpose = validate_purpose(payload.get("purpose"))
+    budget = validate_budget(payload.get("budget"))
+
+    saves = load_saves()
+    save_id = uuid.uuid4().hex
+    saves[save_id] = {
+        "selections": selections,
+        "purpose": purpose,
+        "budget": budget,
+        "catalog": {"products": IMPORTED_CATALOG, "options": BUILD_CATALOG},
+    }
+    persist_saves(saves)
+    return {"save_id": save_id}
+
+
+def open_configuration(payload: dict) -> dict:
+    save_id = payload.get("save_id")
+    if not isinstance(save_id, str) or not save_id:
+        raise ValueError("save_id is required")
+    saved = load_saves().get(save_id)
+    if saved is None:
+        raise ValueError("saved build not found")
+    merge_selected_catalog_snapshot(saved.get("catalog"), saved["selections"])
+    return {
+        "save_id": save_id,
+        "selections": saved["selections"],
+        "purpose": saved["purpose"],
+        "budget": saved["budget"],
+    }
 
 
 def component_type_for(model: str) -> str | None:
@@ -501,7 +562,7 @@ PAGE = """<!doctype html>
   <header><h1>Buduj PC</h1><p class='lead'>Sprawdz kompatybilnosc zestawu na biezaco.</p></header>
   <main>
     <section id='selectors'></section>
-     <section id='base-build' class='summary' aria-live='polite'><label for='purpose'>Przeznaczenie zestawu</label><select id='purpose'><option value='gaming'>Gaming</option><option value='programming'>Programowanie</option></select><label for='budget'>Maksymalny budzet (PLN)</label><input id='budget' type='number' min='0' step='1' placeholder='Podaj budzet'><button id='recommend' type='button'>Dobierz najtanszy zestaw</button><p id='budget-summary'></p><strong id='status'>Wybierz czesci...</strong><p id='total'></p><p id='power'></p><p id='balance'></p><div id='issue'></div><ul id='build-products'></ul></section>
+      <section id='base-build' class='summary' aria-live='polite'><label for='purpose'>Przeznaczenie zestawu</label><select id='purpose'><option value='gaming'>Gaming</option><option value='programming'>Programowanie</option></select><label for='budget'>Maksymalny budzet (PLN)</label><input id='budget' type='number' min='0' step='1' placeholder='Podaj budzet'><button id='recommend' type='button'>Dobierz najtanszy zestaw</button><p><button id='save' type='button'>Zapisz zestaw</button><input id='save-id' type='text' placeholder='Identyfikator zapisu'><button id='open' type='button'>Otworz zapis</button></p><p id='save-status' aria-live='polite'></p><p id='budget-summary'></p><strong id='status'>Wybierz czesci...</strong><p id='total'></p><p id='power'></p><p id='balance'></p><div id='issue'></div><ul id='build-products'></ul></section>
      <section id='variants'></section>
     <section class='summary'>
       <button id='import' type='button'>Importuj odpowiedz x-kom</button>
@@ -605,13 +666,16 @@ PAGE = """<!doctype html>
        }
        let buildRefreshGeneration = 0;
        let catalogRefreshGeneration = 0;
-       function readBudget() {
-         const value = document.querySelector('#budget').value;
-         return value === '' ? null : Number(value);
-       }
+      function readBudget() {
+          const value = document.querySelector('#budget').value;
+          return value === '' ? null : Number(value);
+        }
+        function currentSelections() {
+          return Object.fromEntries(requiredTypes.map(type => [type, document.querySelector(`#${type}`).value]));
+        }
        async function refreshBuild() {
         const refreshGeneration = ++buildRefreshGeneration;
-        const selections = Object.fromEntries(requiredTypes.map(type => [type, document.querySelector(`#${type}`).value]));
+        const selections = currentSelections();
        if (Object.values(selections).some(value => !value)) {
          clearBuildSummary();
          return;
@@ -744,7 +808,7 @@ PAGE = """<!doctype html>
         variantState.build = build;
         renderVariant();
       }
-     async function recommendSet() {
+      async function recommendSet() {
          const budget = readBudget();
         const purpose = document.querySelector('#purpose').value;
         if (budget === null || !Number.isFinite(budget) || budget < 0) return;
@@ -788,9 +852,50 @@ PAGE = """<!doctype html>
          await refreshCatalog();
          status.textContent = `Zaimportowano: ${report.count}`;
        } catch (error) {
-        status.textContent = `Blad importu: ${error.message}`;
+         status.textContent = `Blad importu: ${error.message}`;
+       }
+     }
+       async function saveBuild() {
+        const budget = readBudget();
+        const saveStatus = document.querySelector('#save-status');
+        try {
+          const response = await fetch('/api/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ selections: currentSelections(), purpose: document.querySelector('#purpose').value, budget })
+          });
+          const result = await response.json();
+          if (!response.ok) throw new Error(result.error || 'Zapis nie powiodl sie');
+          document.querySelector('#save-id').value = result.save_id;
+          saveStatus.textContent = `Zapisano zestaw: ${result.save_id}`;
+        } catch (error) {
+          saveStatus.textContent = `Blad zapisu: ${error.message}`;
+        }
       }
-    }
+      async function openBuild() {
+        const saveStatus = document.querySelector('#save-status');
+        const saveId = document.querySelector('#save-id').value.trim();
+        try {
+          const response = await fetch('/api/open', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ save_id: saveId })
+          });
+          const result = await response.json();
+          if (!response.ok) throw new Error(result.error || 'Odczyt nie powiodl sie');
+          document.querySelector('#purpose').value = result.purpose;
+          document.querySelector('#budget').value = result.budget;
+          await refreshCatalog();
+          requiredTypes.forEach(type => {
+            const select = document.querySelector(`#${type}`);
+            if (select) select.value = result.selections[type];
+          });
+          await refreshBuild();
+          saveStatus.textContent = `Otworzono zestaw: ${result.save_id}`;
+        } catch (error) {
+          saveStatus.textContent = `Blad odczytu: ${error.message}`;
+        }
+      }
       function renderCatalog(products) {
         const list = document.querySelector('#catalog-products');
         list.replaceChildren();
@@ -959,8 +1064,10 @@ PAGE = """<!doctype html>
       document.querySelector('#catalog-type').addEventListener('change', filterCatalog);
     document.querySelector('#purpose').addEventListener('change', refreshBuild);
     document.querySelector('#budget').addEventListener('change', refreshBuild);
-    document.querySelector('#recommend').addEventListener('click', recommendSet);
-    refreshCatalog();
+     document.querySelector('#recommend').addEventListener('click', recommendSet);
+     document.querySelector('#save').addEventListener('click', saveBuild);
+     document.querySelector('#open').addEventListener('click', openBuild);
+     refreshCatalog();
   </script>
 </body>
 </html>"""
@@ -968,6 +1075,85 @@ PAGE = """<!doctype html>
 
 IMPORTED_CATALOG = []
 BUILD_CATALOG = []
+
+
+def restore_catalog_snapshot(snapshot: dict | None) -> None:
+    if not isinstance(snapshot, dict):
+        raise ValueError("saved catalog snapshot is missing")
+    products = snapshot.get("products")
+    options = snapshot.get("options")
+    if not isinstance(products, list) or not isinstance(options, list):
+        raise ValueError("saved catalog snapshot is invalid")
+    IMPORTED_CATALOG[:] = products
+    BUILD_CATALOG[:] = options
+
+
+def merge_selected_catalog_snapshot(snapshot: dict | None, selections: dict) -> None:
+    if not isinstance(snapshot, dict):
+        raise ValueError("saved catalog snapshot is missing")
+    products = snapshot.get("products")
+    options = snapshot.get("options")
+    if not isinstance(products, list) or not isinstance(options, list):
+        raise ValueError("saved catalog snapshot is invalid")
+
+    saved_options = {option.get("id"): option for option in options}
+    selected_options = {}
+    for component_type in REQUIRED_TYPES:
+        option = saved_options.get(selections.get(component_type))
+        if not isinstance(option, dict) or option.get("type") != component_type:
+            raise ValueError("saved catalog snapshot does not contain the selected components")
+        selected_options[option["id"]] = option
+
+    merged_options = []
+    replaced_option_ids = set()
+    for option in BUILD_CATALOG:
+        replacement = selected_options.get(option.get("id"))
+        merged_options.append(replacement if replacement is not None else option)
+        if replacement is not None:
+            replaced_option_ids.add(option["id"])
+    merged_options.extend(
+        option for option_id, option in selected_options.items()
+        if option_id not in replaced_option_ids
+    )
+
+    selected_models = {option["model"] for option in selected_options.values()}
+    saved_products = {
+        product.get("model"): product
+        for product in products
+        if product.get("model") in selected_models
+    }
+    merged_products = []
+    replaced_models = set()
+    for product in IMPORTED_CATALOG:
+        replacement = saved_products.get(product.get("model"))
+        merged_products.append(replacement if replacement is not None else product)
+        if replacement is not None:
+            replaced_models.add(product["model"])
+    merged_products.extend(
+        product for model, product in saved_products.items()
+        if model not in replaced_models
+    )
+
+    IMPORTED_CATALOG[:] = merged_products
+    BUILD_CATALOG[:] = merged_options
+
+
+def load_current_catalog() -> None:
+    if not SAVES_PATH.exists():
+        return
+    try:
+        with SAVES_PATH.open(encoding="utf-8") as handle:
+            saves = json.load(handle)
+        latest_save = next(reversed(saves.values()), None)
+        snapshot = latest_save.get("catalog") if isinstance(latest_save, dict) else None
+        if not isinstance(snapshot, dict):
+            return
+        restore_catalog_snapshot(snapshot)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return
+
+
+load_current_catalog()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -996,12 +1182,23 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         request = urlparse(self.path)
-        if request.path not in ("/api/import", "/api/build", "/api/recommend", "/api/refresh"):
+        if request.path not in (
+            "/api/import", "/api/build", "/api/recommend", "/api/refresh",
+            "/api/save", "/api/open",
+        ):
             self.respond(HTTPStatus.NOT_FOUND, "text/plain", b"Not found")
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
             payload = json.loads(self.rfile.read(length))
+            if request.path == "/api/save":
+                result = save_configuration(payload)
+                self.respond(HTTPStatus.OK, "application/json", json.dumps(result).encode())
+                return
+            if request.path == "/api/open":
+                result = open_configuration(payload)
+                self.respond(HTTPStatus.OK, "application/json", json.dumps(result).encode())
+                return
             if request.path == "/api/build":
                 result = build_from_selections(
                     payload.get("selections"),
