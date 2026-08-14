@@ -487,6 +487,130 @@ class BuilderSmokeTest(unittest.TestCase):
             app_process.terminate()
             app_process.wait(timeout=3)
 
+    def test_buyer_can_search_second_store_offer_for_xkom_only_product(self):
+        with socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            app_port = listener.getsockname()[1]
+        with socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            self.webdriver_port = listener.getsockname()[1]
+        app_process = subprocess.Popen([sys.executable, "app.py", "--port", str(app_port)], cwd=ROOT)
+        driver_process = subprocess.Popen(
+            ["geckodriver", "--port", str(self.webdriver_port)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            for _ in range(20):
+                try:
+                    with urlopen(f"http://127.0.0.1:{self.webdriver_port}/status", timeout=0.2):
+                        break
+                except OSError:
+                    time.sleep(0.1)
+            else:
+                self.skipTest("geckodriver is unavailable")
+            session = self.webdriver("POST", "/session", {"capabilities": {"alwaysMatch": {"browserName": "firefox"}}})
+            session_id = session["value"]["sessionId"]
+            base = f"/session/{session_id}"
+            self.webdriver("POST", f"{base}/url", {"url": f"http://127.0.0.1:{app_port}/"})
+            self.webdriver(
+                "POST",
+                f"{base}/execute/sync",
+                {
+                    "script": """
+                        const originalFetch = window.fetch;
+                        window.__searchBodies = [];
+                        window.fetch = async (...args) => {
+                          if (args[0] === '/api/import') {
+                            const body = JSON.parse(args[1].body);
+                            body.products = body.products.filter(offer => !(offer.model === 'ryzen-5-7600' && offer.source === 'prepared-shop'));
+                            args[1] = {...args[1], body: JSON.stringify(body)};
+                          }
+                          if (args[0] === '/api/search-offer') window.__searchBodies.push(JSON.parse(args[1].body));
+                          return originalFetch(...args);
+                        };
+                    """,
+                    "args": [],
+                },
+            )
+            self.webdriver("POST", f"{base}/execute/sync", {"script": "document.querySelector('#import').click()", "args": []})
+            for _ in range(20):
+                status = self.webdriver(
+                    "POST", f"{base}/execute/sync", {"script": "return document.querySelector('#import-status').textContent", "args": []}
+                )["value"]
+                if status.startswith("Zaimportowano:"):
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail("x-kom-only import did not finish")
+            before = self.webdriver(
+                "POST",
+                f"{base}/execute/sync",
+                {
+                    "script": """
+                        const item = [...document.querySelectorAll('#catalog-products li')].find(item => item.textContent.includes('ryzen-5-7600'));
+                        return {text: item?.textContent || '', buttons: [...(item?.querySelectorAll('button') || [])].map(button => button.textContent)};
+                    """,
+                    "args": [],
+                },
+            )["value"]
+            self.assertIn("x-kom", before["text"], "x-kom offer remains visible before searching")
+            search_button = self.webdriver(
+                "POST",
+                f"{base}/execute/sync",
+                {
+                    "script": """
+                        const item = [...document.querySelectorAll('#catalog-products li')].find(item => item.textContent.includes('ryzen-5-7600'));
+                        const button = [...(item?.querySelectorAll('button') || [])].find(button => /Szukaj oferty/i.test(button.textContent));
+                        if (button) button.click();
+                        return Boolean(button);
+                    """,
+                    "args": [],
+                },
+            )["value"]
+            self.assertTrue(search_button, "recognized product exposes the second-store search action")
+            for _ in range(20):
+                result = self.webdriver(
+                    "POST",
+                    f"{base}/execute/sync",
+                    {
+                        "script": """
+                            const item = [...document.querySelectorAll('#catalog-products li')].find(item => item.textContent.includes('ryzen-5-7600'));
+                            return {text: item?.textContent || '', links: [...(item?.querySelectorAll('a') || [])].map(link => link.href)};
+                        """,
+                        "args": [],
+                    },
+                )["value"]
+                if "prepared-shop" in result["text"]:
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail(f"second-store offer did not render: {result!r}")
+            self.assertIn("829 PLN", result["text"], "successful search renders the matched second-store price")
+            self.assertIn("https://prepared-shop.example/oferta/offer-2", result["links"], "successful search renders the matched offer link")
+            self.assertEqual(
+                self.webdriver(
+                    "POST", f"{base}/execute/sync", {"script": "return document.querySelectorAll('#catalog-products li').length", "args": []}
+                )["value"],
+                9,
+                "search enriches the existing product instead of creating a duplicate",
+            )
+            search_request = self.webdriver(
+                "POST", f"{base}/execute/sync", {"script": "return window.__searchBodies[0]", "args": []}
+            )["value"]
+            self.assertEqual(search_request, {"product_id": "ryzen-5-7600"}, "search targets the recognized product")
+            self.assertIn("x-kom", result["text"], "search preserves the existing x-kom offer")
+        finally:
+            if 'session_id' in locals():
+                try:
+                    self.webdriver("DELETE", f"{base}")
+                except OSError:
+                    pass
+            driver_process.terminate()
+            driver_process.wait(timeout=3)
+            app_process.terminate()
+            app_process.wait(timeout=3)
+
     def test_buyer_can_refresh_selected_product_offer_price(self):
         with socket() as listener:
             listener.bind(("127.0.0.1", 0))
@@ -1123,6 +1247,91 @@ class BuilderSmokeTest(unittest.TestCase):
             )
             self.assertEqual(report["products"][2], payload["products"][3])
             self.assertEqual(report["products"][3], payload["products"][4])
+        finally:
+            process.terminate()
+            process.wait(timeout=3)
+
+    def test_search_offer_is_idempotent_and_reports_no_match(self):
+        payload = {
+            "products": [
+                {
+                    "id": "offer-1",
+                    "model": "ryzen-5-7600",
+                    "name": "AMD Ryzen 5 7600 BOX",
+                    "price": 799,
+                    "source": "x-kom",
+                },
+            ]
+        }
+        with socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            port = listener.getsockname()[1]
+        base_url = f"http://127.0.0.1:{port}"
+        process = subprocess.Popen([sys.executable, "app.py", "--port", str(port)], cwd=ROOT)
+        try:
+            for _ in range(20):
+                try:
+                    with urlopen(f"{base_url}/", timeout=0.2):
+                        break
+                except OSError:
+                    time.sleep(0.1)
+            else:
+                self.fail("Application did not start")
+
+            import_request = Request(
+                f"{base_url}/api/import",
+                data=json.dumps(payload).encode(),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urlopen(import_request) as response:
+                self.assertEqual(response.status, 200)
+
+            search_request = Request(
+                f"{base_url}/api/search-offer",
+                data=json.dumps({"product_id": "ryzen-5-7600"}).encode(),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urlopen(search_request) as response:
+                first_result = json.load(response)
+            with urlopen(search_request) as response:
+                second_result = json.load(response)
+            for result in (first_result, second_result):
+                offers = result["product"]["offers"]
+                self.assertEqual(sum(offer["source"] == "prepared-shop" for offer in offers), 1)
+            self.assertEqual(second_result, first_result, "repeating the same search does not mutate the result")
+
+            no_match_payload = {
+                "products": [
+                    {
+                        "id": "offer-3",
+                        "model": "rtx-4070",
+                        "name": "GeForce RTX 4070",
+                        "price": 2399,
+                        "source": "x-kom",
+                    },
+                ]
+            }
+            no_match_import = Request(
+                f"{base_url}/api/import",
+                data=json.dumps(no_match_payload).encode(),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urlopen(no_match_import) as response:
+                self.assertEqual(response.status, 200)
+            no_match_request = Request(
+                f"{base_url}/api/search-offer",
+                data=json.dumps({"product_id": "rtx-4070"}).encode(),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with self.assertRaises(HTTPError) as error_context:
+                urlopen(no_match_request)
+            self.assertEqual(error_context.exception.code, 400)
+            with error_context.exception as error_response:
+                self.assertEqual(json.load(error_response), {"error": "no matching offer"})
         finally:
             process.terminate()
             process.wait(timeout=3)

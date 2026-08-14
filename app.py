@@ -67,6 +67,16 @@ REFRESHED_PRICES = {
     "compatible-cooling": 189,
     "regnum-400": 279,
 }
+SEARCHED_OFFERS = {
+    "ryzen-5-7600": {
+        "id": "offer-2",
+        "model": "ryzen-5-7600",
+        "name": "AMD 7600 3.8 GHz",
+        "price": 829,
+        "source": "prepared-shop",
+        "url": "https://prepared-shop.example/oferta/offer-2",
+    },
+}
 
 COMPONENTS = {
     "cpu": CPUS,
@@ -431,6 +441,27 @@ def refresh_product(product_id: str) -> dict:
         offer["checked_at"] = checked_at
     product["price"] = refreshed_price
     product["last_checked"] = checked_at
+    return product
+
+
+def search_product_offer(product_id: str) -> dict:
+    """Add the known second-store offer to an imported product once."""
+    product = next((item for item in IMPORTED_CATALOG if item["model"] == product_id), None)
+    if product is None:
+        raise ValueError("unknown product")
+    offer = SEARCHED_OFFERS.get(product_id)
+    if offer is None:
+        raise ValueError("no matching offer")
+    existing = next(
+        (item for item in product["offers"] if item.get("source") == offer["source"]),
+        None,
+    )
+    if existing is None:
+        product["offers"].append(dict(offer))
+    else:
+        offer = existing
+    product["price"] = product["offers"][-1]["price"]
+    sync_build_catalog_product(product)
     return product
 
 
@@ -904,10 +935,17 @@ PAGE = """<!doctype html>
           item.textContent = `${product.type} - ${product.model} - ${product.price} PLN`;
           const refresh = document.createElement('button');
           refresh.type = 'button';
-          refresh.textContent = 'Odswiez ceny';
-          refresh.addEventListener('click', () => refreshProduct(product.model));
-          item.append(document.createTextNode(' '), refresh);
-          (product.offers || []).forEach(offer => {
+           refresh.textContent = 'Odswiez ceny';
+           refresh.addEventListener('click', () => refreshProduct(product.model));
+           item.append(document.createTextNode(' '), refresh);
+           if (!(product.offers || []).some(offer => offer.source === 'prepared-shop')) {
+             const search = document.createElement('button');
+             search.type = 'button';
+             search.textContent = 'Szukaj oferty';
+             search.addEventListener('click', () => searchProductOffer(product.model));
+             item.append(document.createTextNode(' '), search);
+           }
+           (product.offers || []).forEach(offer => {
             const details = document.createTextNode(` ${offer.name} - ${offer.price} PLN `);
             if (offer.url) {
               const link = document.createElement('a');
@@ -981,7 +1019,7 @@ PAGE = """<!doctype html>
         }
         comparison.append(difference);
       }
-      async function refreshProduct(productId) {
+       async function refreshProduct(productId) {
         const response = await fetch('/api/refresh', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -994,10 +1032,7 @@ PAGE = """<!doctype html>
              .map(type => [type, document.querySelector(`#${type}`)?.value])
              .filter(([, value]) => value)
          );
-         catalog = catalog.map(product => product.model === report.product.model ? report.product : product);
-         buildCatalog = buildCatalog.map(product => product.model === report.product.model
-           ? { ...product, price: report.product.price, offers: report.product.offers }
-           : product);
+          replaceCatalogProduct(report.product);
          renderSelectors(buildCatalog);
          requiredTypes.forEach(type => {
            const select = document.querySelector(`#${type}`);
@@ -1008,10 +1043,29 @@ PAGE = """<!doctype html>
          });
            await refreshBuild();
            if (variantState) await refreshVariant();
-           filterCatalog();
-           renderComparison();
-        }
-      function filterCatalog() {
+            filterCatalog();
+            renderComparison();
+       }
+       function replaceCatalogProduct(updatedProduct) {
+         catalog = catalog.map(product => product.model === updatedProduct.model ? updatedProduct : product);
+         buildCatalog = buildCatalog.map(product => product.model === updatedProduct.model
+           ? { ...product, price: updatedProduct.price, offers: updatedProduct.offers }
+           : product);
+       }
+       async function searchProductOffer(productId) {
+         const response = await fetch('/api/search-offer', {
+           method: 'POST',
+           headers: { 'Content-Type': 'application/json' },
+           body: JSON.stringify({ product_id: productId })
+         });
+         const report = await response.json();
+         if (!response.ok) return;
+         replaceCatalogProduct(report.product);
+         renderSelectors(buildCatalog);
+         filterCatalog();
+         renderComparison();
+       }
+       function filterCatalog() {
        const fragment = document.querySelector('#catalog-search').value.trim().toLowerCase();
        const selectedType = document.querySelector('#catalog-type').value;
        const matches = product => {
@@ -1184,7 +1238,7 @@ class Handler(BaseHTTPRequestHandler):
         request = urlparse(self.path)
         if request.path not in (
             "/api/import", "/api/build", "/api/recommend", "/api/refresh",
-            "/api/save", "/api/open",
+            "/api/search-offer", "/api/save", "/api/open",
         ):
             self.respond(HTTPStatus.NOT_FOUND, "text/plain", b"Not found")
             return
@@ -1219,6 +1273,10 @@ class Handler(BaseHTTPRequestHandler):
             if request.path == "/api/refresh":
                 result = refresh_product(payload.get("product_id"))
                 sync_build_catalog_product(result)
+                self.respond(HTTPStatus.OK, "application/json", json.dumps({"product": result}).encode())
+                return
+            if request.path == "/api/search-offer":
+                result = search_product_offer(payload.get("product_id"))
                 self.respond(HTTPStatus.OK, "application/json", json.dumps({"product": result}).encode())
                 return
             report = import_products(payload)
