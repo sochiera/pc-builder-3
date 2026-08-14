@@ -178,6 +178,15 @@ Jako kupujacy chce porownac dwa zamienniki dla jednego miejsca w aktualnym zesta
 - Sprawdzenie: w przygotowanym kompletnym zestawie porownaj dwie plyty glowne, z ktorych jedna pasuje do CPU, a druga nie, i sprawdz obok siebie wynik zgodnosci z uzasadnieniem oraz laczna cene zestawu dla kazdej opcji.
 - Poza zakresem: zastosowanie zamiennika do zestawu, porownanie wiecej niz dwoch opcji i automatyczna rekomendacja lepszej czesci.
 
+## US-025 — Uzytkownik porownuje oplacalnosc komponentow [nowa]
+
+Jako kupujacy chce porownac koszt i przydatnosc dwoch komponentow dla wybranego zastosowania, zeby swiadomie zdecydowac, czy drozsza opcja daje mi istotna korzysc.
+
+- Dlaczego teraz: PROJECT.md wskazuje porownania, koszt i kompromisy jako podstawe decyzji osob wybierajacych czesci, a istniejace historyjki nie lacza porownania komponentow z przeznaczeniem komputera.
+- Sekcja briefu: Porównywanie komponentów
+- Sprawdzenie: wybierz Gaming oraz dwa przygotowane GPU o roznej cenie i przydatnosci, a nastepnie sprawdz, ze porownanie pokazuje dla obu cene, ocene dla Gaming i wyjasnienie roznicy.
+- Poza zakresem: automatyczny wybor zwyciezcy, benchmarki zewnetrzne, porownanie calego zestawu i wiecej niz dwa komponenty.
+
 ## US-019 — Uzytkownik tworzy wariant zestawu [zrobiona]
 
 Jako kupujacy chce skopiowac zestaw do jednego wariantu i zmienic w nim czesc, zeby zachowac punkt odniesienia podczas rozwazania alternatywy.
