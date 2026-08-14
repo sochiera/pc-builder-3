@@ -88,7 +88,7 @@ Jako skladajacy komputer chce zobaczyc, czy moc PSU wystarcza dla wybranego zest
 - Sprawdzenie: wybierz przygotowany zestaw przekraczajacy moc PSU i sprawdz, ze analiza pokazuje wymaganie, dostepna moc i blokade.
 - Poza zakresem: sprawnosc, okablowanie, skoki poboru i rekomendowany zapas procentowy.
 
-## US-011 — Uzytkownik okresla przeznaczenie komputera [do weryfikacji]
+## US-011 — Uzytkownik okresla przeznaczenie komputera [w toku]
 
 Jako kupujacy chce wybrac jedno zastosowanie komputera, zeby oceny zestawu odnosily sie do mojego celu.
 
