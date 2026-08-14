@@ -115,7 +115,7 @@ Jako kupujacy chce zobaczyc jedna wyjasniona ocene zestawu dla wybranego zastoso
 - Sprawdzenie: otworz przygotowany niezbalansowany zestaw i sprawdz, ze ocena wskazuje jego najslabszy element oraz zwiazek z wybranym zastosowaniem.
 - Poza zakresem: wiele metryk punktowych, benchmarki i rekomendacje zamiennikow.
 
-## US-014 — Uzytkownik znajduje najtanszy zestaw [do weryfikacji]
+## US-014 — Uzytkownik znajduje najtanszy zestaw [w toku]
 
 Jako kupujacy chce otrzymac najtanszy zgodny zestaw dla jednego zastosowania i budzetu, zeby miec prosty punkt wyjscia do zakupu.
 
