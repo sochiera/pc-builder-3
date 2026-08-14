@@ -160,7 +160,7 @@ Jako kupujacy chce zestawic dwa komponenty tego samego typu obok siebie, zeby zo
 - Sprawdzenie: wybierz dwa przygotowane GPU i sprawdz, ze widac obok siebie ich nazwy, ceny i jeden kluczowy parametr z zaznaczonymi roznicami.
 - Poza zakresem: trzeci produkt, dowolne parametry i porownanie zestawow.
 
-## US-019 — Uzytkownik tworzy wariant zestawu [do weryfikacji]
+## US-019 — Uzytkownik tworzy wariant zestawu [zrobiona]
 
 Jako kupujacy chce skopiowac zestaw do jednego wariantu i zmienic w nim czesc, zeby zachowac punkt odniesienia podczas rozwazania alternatywy.
 
