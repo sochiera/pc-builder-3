@@ -169,6 +169,15 @@ Jako kupujacy chce zestawic dwa komponenty tego samego typu obok siebie, zeby zo
 - Sprawdzenie: wybierz dwa przygotowane GPU i sprawdz, ze widac obok siebie ich nazwy, ceny i jeden kluczowy parametr z zaznaczonymi roznicami.
 - Poza zakresem: trzeci produkt, dowolne parametry i porownanie zestawow.
 
+## US-024 — Uzytkownik porownuje zamienniki w zestawie [nowa]
+
+Jako kupujacy chce porownac dwa zamienniki dla jednego miejsca w aktualnym zestawie, zeby przed zmiana zobaczyc wplyw kazdego na zgodnosc i laczna cene konfiguracji.
+
+- Dlaczego teraz: PROJECT.md wskazuje porownania i kompromisy jako potrzebe osob rozwazajacych warianty, a dowod US-018 nie potwierdzil jeszcze porownania w dzialajacej przegladarce.
+- Sekcja briefu: Porównywanie komponentów
+- Sprawdzenie: w przygotowanym kompletnym zestawie porownaj dwie plyty glowne, z ktorych jedna pasuje do CPU, a druga nie, i sprawdz obok siebie wynik zgodnosci z uzasadnieniem oraz laczna cene zestawu dla kazdej opcji.
+- Poza zakresem: zastosowanie zamiennika do zestawu, porownanie wiecej niz dwoch opcji i automatyczna rekomendacja lepszej czesci.
+
 ## US-019 — Uzytkownik tworzy wariant zestawu [zrobiona]
 
 Jako kupujacy chce skopiowac zestaw do jednego wariantu i zmienic w nim czesc, zeby zachowac punkt odniesienia podczas rozwazania alternatywy.
