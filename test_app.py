@@ -78,21 +78,21 @@ class BuilderSmokeTest(unittest.TestCase):
                 time.sleep(0.1)
             else:
                 self.fail("import result did not render")
-            self.assertEqual(status["value"], "Zaimportowano: 1", "same-model offers produce one imported product")
+            self.assertEqual(status["value"], "Zaimportowano: 8", "full prepared response produces one product per model")
             imported_payload = self.webdriver(
                 "POST",
                 f"{base}/execute/sync",
                 {"script": "return window.__importBodies[0]", "args": []},
             )["value"]
-            self.assertEqual(len(imported_payload["products"]), 2)
+            self.assertEqual(len(imported_payload["products"]), 9)
             self.assertEqual(
-                [offer["model"] for offer in imported_payload["products"]],
+                [offer["model"] for offer in imported_payload["products"][:2]],
                 ["ryzen-5-7600", "ryzen-5-7600"],
                 "prepared UI response contains two offers of the same model",
             )
             rendered = self.webdriver("POST", f"{base}/execute/sync", {"script": "return document.querySelector('#import-products').textContent", "args": []})
             product_count = self.webdriver("POST", f"{base}/execute/sync", {"script": "return document.querySelectorAll('#import-products li').length", "args": []})
-            self.assertEqual(product_count["value"], 1, "same-model offers render as one catalog product")
+            self.assertEqual(product_count["value"], 8, "prepared response renders one catalog product per model")
             self.assertIn("AMD Ryzen 5 7600", rendered["value"])
             self.assertIn("AMD Ryzen 5 7600 BOX", rendered["value"], "rendered product includes first offer")
             self.assertIn("799 PLN", rendered["value"], "rendered product includes first offer price")
@@ -123,8 +123,8 @@ class BuilderSmokeTest(unittest.TestCase):
                     f"{base}/execute/sync",
                     {"script": "return document.querySelectorAll('#catalog-products li').length", "args": []},
                 )["value"],
-                1,
-                "buyer view renders one item for the two offers",
+                8,
+                "buyer view renders every imported product",
             )
             self.assertIn("cpu", catalog_rendered["value"])
             self.assertIn("ryzen-5-7600", catalog_rendered["value"])
@@ -137,6 +137,104 @@ class BuilderSmokeTest(unittest.TestCase):
                 time.sleep(0.1)
             else:
                 self.fail("import error did not render")
+        finally:
+            if 'session_id' in locals():
+                try:
+                    self.webdriver("DELETE", f"/session/{session_id}")
+                except OSError:
+                    pass
+            driver_process.terminate()
+            driver_process.wait(timeout=3)
+            app_process.terminate()
+            app_process.wait(timeout=3)
+
+    def test_buyer_import_action_loads_complete_catalog_before_recommendation(self):
+        with socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            app_port = listener.getsockname()[1]
+        with socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            self.webdriver_port = listener.getsockname()[1]
+        app_process = subprocess.Popen([sys.executable, "app.py", "--port", str(app_port)], cwd=ROOT)
+        driver_process = subprocess.Popen(
+            ["geckodriver", "--port", str(self.webdriver_port)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            for _ in range(20):
+                try:
+                    with urlopen(f"http://127.0.0.1:{self.webdriver_port}/status", timeout=0.2):
+                        break
+                except OSError:
+                    time.sleep(0.1)
+            else:
+                self.skipTest("geckodriver is unavailable")
+            session = self.webdriver("POST", "/session", {"capabilities": {"alwaysMatch": {"browserName": "firefox"}}})
+            session_id = session["value"]["sessionId"]
+            base = f"/session/{session_id}"
+            self.webdriver("POST", f"{base}/url", {"url": f"http://127.0.0.1:{app_port}/"})
+            self.webdriver(
+                "POST",
+                f"{base}/execute/sync",
+                {"script": "document.querySelector('#import').click()", "args": []},
+            )
+            for _ in range(20):
+                status = self.webdriver(
+                    "POST",
+                    f"{base}/execute/sync",
+                    {"script": "return document.querySelector('#import-status').textContent", "args": []},
+                )["value"]
+                if status.startswith("Zaimportowano:"):
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail("prepared import did not finish")
+            selector_ids = self.webdriver(
+                "POST",
+                f"{base}/execute/sync",
+                {"script": "return [...document.querySelectorAll('#selectors select')].map(select => select.id)", "args": []},
+            )["value"]
+            option_counts = self.webdriver(
+                "POST",
+                f"{base}/execute/sync",
+                {"script": "return [...document.querySelectorAll('#selectors select')].map(select => select.options.length)", "args": []},
+            )["value"]
+            self.assertEqual(len(selector_ids), 8, "buyer import exposes one selector for every required type")
+            self.assertEqual(
+                selector_ids,
+                ["cpu", "motherboard", "ram", "gpu", "disk", "psu", "cooling", "case"],
+                "buyer import exposes all required component selectors before recommendation",
+            )
+            self.assertEqual(
+                sum(count > 0 for count in option_counts),
+                8,
+                "buyer import exposes an available product for every required type before recommendation",
+            )
+            self.webdriver(
+                "POST",
+                f"{base}/execute/sync",
+                {
+                    "script": "document.querySelector('#purpose').value = 'gaming'; document.querySelector('#budget').value = '7000'; document.querySelector('#recommend').click();",
+                    "args": [],
+                },
+            )
+            for _ in range(20):
+                recommendation = self.webdriver(
+                    "POST",
+                    f"{base}/execute/sync",
+                    {
+                        "script": "return {status: document.querySelector('#status').textContent, total: document.querySelector('#total').textContent, products: document.querySelectorAll('#build-products li').length}",
+                        "args": [],
+                    },
+                )["value"]
+                if recommendation["products"] == 8 and "5772 PLN" in recommendation["total"]:
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail(f"recommendation did not render after import: {recommendation}")
+            self.assertIn("kompatybilny", recommendation["status"].lower(), "recommended set is compatible")
+            self.assertIn("5772 PLN", recommendation["total"], "recommended set renders its cheapest total")
         finally:
             if 'session_id' in locals():
                 try:
@@ -668,7 +766,7 @@ class BuilderSmokeTest(unittest.TestCase):
                 self.assertEqual(response.status, 200)
             with urlopen(f"{base_url}/api/catalog") as response:
                 catalog = json.load(response)
-            self.assertEqual(len(catalog["products"]), 10, "catalog keeps every recognized imported variant")
+            self.assertEqual(len(catalog["products"]), 11, "catalog keeps every recognized imported variant")
             self.assertEqual(
                 {product["model"] for product in catalog["products"] if product["type"] == "cpu"},
                 {"ryzen-5-7600", "core-i5-14600k"},
@@ -677,7 +775,7 @@ class BuilderSmokeTest(unittest.TestCase):
                 {product["model"] for product in catalog["products"] if product["type"] == "motherboard"},
                 {"b650", "z790"},
             )
-            self.assertEqual(len(catalog["options"]), 10, "builder options reflect imported variants")
+            self.assertEqual(len(catalog["options"]), 11, "builder options reflect imported variants")
         finally:
             process.terminate()
             process.wait(timeout=3)
@@ -822,6 +920,164 @@ class BuilderSmokeTest(unittest.TestCase):
             self.assertIn("900 W", power_issues[0]["message"])
             self.assertIn("750 W", power_issues[0]["message"])
         finally:
+            process.terminate()
+            process.wait(timeout=3)
+
+    def test_buyer_can_request_a_complete_set_for_purpose_and_budget(self):
+        payload = {
+            "products": [
+                {"id": "cpu-1", "model": "ryzen-5-7600", "name": "AMD Ryzen 5 7600", "price": 799},
+                {"id": "cpu-2", "model": "core-i5-14600k", "name": "Intel Core i5-14600K", "price": 1249},
+                {"id": "board-1", "model": "b650", "name": "MSI B650 Gaming Plus WiFi", "price": 699},
+                {"id": "board-2", "model": "z790", "name": "ASUS Prime Z790-P", "price": 849},
+                {"id": "ram-1", "model": "ddr5-6000", "name": "Kingston Fury DDR5 32 GB", "price": 499},
+                {"id": "gpu-1", "model": "rtx-4070", "name": "GeForce RTX 4070", "price": 2399},
+                {"id": "disk-1", "model": "nvme-1tb", "name": "Samsung 990 EVO 1 TB", "price": 399},
+                {"id": "psu-1", "model": "psu-750", "name": "be quiet! Pure Power 12 M 750W", "price": 449},
+                {"id": "psu-2", "model": "psu-900", "name": "be quiet! Pure Power 12 M 900W", "price": 449},
+                {"id": "cooler-2", "model": "fortis-5", "name": "Endorfy Fortis 5", "price": 99},
+                {"id": "cooler-1", "model": "compatible-cooling", "name": "Kompatybilne chlodzenie", "price": 199},
+                {"id": "case-1", "model": "regnum-400", "name": "Endorfy Regnum 400 ARGB", "price": 299},
+            ]
+        }
+        with socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            port = listener.getsockname()[1]
+        base_url = f"http://127.0.0.1:{port}"
+        process = subprocess.Popen([sys.executable, "app.py", "--port", str(port)], cwd=ROOT)
+        driver_process = None
+        try:
+            import_request = Request(
+                f"{base_url}/api/import",
+                data=json.dumps(payload).encode(),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            for _ in range(20):
+                try:
+                    with urlopen(import_request) as response:
+                        self.assertEqual(response.status, 200)
+                    break
+                except OSError:
+                    time.sleep(0.1)
+            else:
+                self.fail("Application did not start")
+
+            recommend_request = Request(
+                f"{base_url}/api/recommend",
+                data=json.dumps({"purpose": "gaming", "budget": 7000}).encode(),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            try:
+                with urlopen(recommend_request) as response:
+                    recommend_status = response.status
+                    recommendation = json.load(response)
+            except HTTPError as error:
+                recommend_status = error.code
+                recommendation = {}
+
+            self.assertEqual(recommend_status, 200, "selection endpoint accepts purpose and budget")
+            self.assertEqual(len(recommendation.get("products", [])), 8, "selection returns a complete set")
+            self.assertIsInstance(recommendation.get("total"), (int, float), "selection returns the set total")
+            self.assertEqual(recommendation["purpose"], "gaming", "selection preserves the requested purpose")
+            self.assertEqual(recommendation["budget"]["limit"], 7000, "selection preserves the requested budget")
+            self.assertEqual(recommendation["total"], 5742, "selection chooses the cheapest compatible combination")
+            self.assertIn("psu-2", recommendation["products"], "selection uses the imported PSU with sufficient capacity")
+            self.assertNotIn("psu-1", recommendation["products"], "selection rejects the insufficient PSU")
+            self.assertIn("cooler-1", recommendation["products"], "selection uses the compatible cooling option")
+            self.assertNotIn("cooler-2", recommendation["products"], "selection rejects the cheaper incompatible cooling option")
+            self.assertEqual(recommendation["analysis"]["status"], "compatible", "selected combination is compatible")
+
+            with socket() as listener:
+                listener.bind(("127.0.0.1", 0))
+                self.webdriver_port = listener.getsockname()[1]
+            driver_process = subprocess.Popen(
+                ["geckodriver", "--port", str(self.webdriver_port)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            for _ in range(20):
+                try:
+                    with urlopen(f"http://127.0.0.1:{self.webdriver_port}/status", timeout=0.2):
+                        break
+                except OSError:
+                    time.sleep(0.1)
+            else:
+                self.skipTest("geckodriver is unavailable")
+
+            session = self.webdriver("POST", "/session", {"capabilities": {"alwaysMatch": {"browserName": "firefox"}}})
+            session_id = session["value"]["sessionId"]
+            base = f"/session/{session_id}"
+            self.webdriver("POST", f"{base}/url", {"url": f"{base_url}/"})
+            self.webdriver(
+                "POST",
+                f"{base}/execute/sync",
+                {
+                    "script": """
+                        window.__recommendBodies = [];
+                        const originalFetch = window.fetch;
+                        window.fetch = async (...args) => {
+                            if (args[0] === '/api/recommend') window.__recommendBodies.push(JSON.parse(args[1].body));
+                            return originalFetch(...args);
+                        };
+                    """,
+                    "args": [],
+                },
+            )
+            for _ in range(20):
+                selector_count = self.webdriver(
+                    "POST", f"{base}/execute/sync", {"script": "return document.querySelectorAll('#selectors select').length", "args": []}
+                )["value"]
+                if selector_count == 8:
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail("builder selectors did not render before recommendation")
+            self.webdriver("POST", f"{base}/execute/sync", {"script": "document.querySelector('#budget').value = '7000'; document.querySelector('#recommend').click();", "args": []})
+            for _ in range(20):
+                rendered = self.webdriver(
+                    "POST", f"{base}/execute/sync", {"script": "return document.querySelector('#build-products').textContent", "args": []}
+                )["value"]
+                total = self.webdriver(
+                    "POST", f"{base}/execute/sync", {"script": "return document.querySelector('#total').textContent", "args": []}
+                )["value"]
+                if "5742 PLN" in total and rendered:
+                    break
+                time.sleep(0.1)
+            else:
+                diagnostics = self.webdriver(
+                    "POST", f"{base}/execute/sync", {"script": "return {bodies: window.__recommendBodies, status: document.querySelector('#status').textContent, total: document.querySelector('#total').textContent}", "args": []}
+                )["value"]
+                self.fail(f"recommendation did not render in the builder: {diagnostics}")
+            request_bodies = self.webdriver(
+                "POST", f"{base}/execute/sync", {"script": "return window.__recommendBodies", "args": []}
+            )["value"]
+            self.assertEqual(request_bodies, [{"purpose": "gaming", "budget": 7000}], "button click submits purpose and budget")
+            self.assertEqual(
+                self.webdriver(
+                    "POST", f"{base}/execute/sync", {"script": "return [...document.querySelectorAll('#selectors select')].map(select => select.value)", "args": []}
+                )["value"],
+                recommendation["products"],
+                "builder selectors show the recommended products",
+            )
+            self.assertEqual(
+                self.webdriver(
+                    "POST", f"{base}/execute/sync", {"script": "return document.querySelectorAll('#build-products li').length", "args": []}
+                )["value"],
+                8,
+                "builder renders every recommended product",
+            )
+            self.assertIn("5742 PLN", total, "builder renders the recommended total")
+        finally:
+            if 'session_id' in locals():
+                try:
+                    self.webdriver("DELETE", f"/session/{session_id}")
+                except OSError:
+                    pass
+            if driver_process is not None:
+                driver_process.terminate()
+                driver_process.wait(timeout=3)
             process.terminate()
             process.wait(timeout=3)
 

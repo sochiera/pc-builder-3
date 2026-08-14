@@ -2,6 +2,7 @@
 """Minimal vertical slice for the PC builder."""
 
 import argparse
+import itertools
 import json
 import math
 from http import HTTPStatus
@@ -58,6 +59,13 @@ COMPONENTS = {
     "cooling": COOLING,
     "case": CASES,
 }
+COMPONENTS_BY_TYPE = {
+    component_type: {
+        **components,
+        **BUILDER_ONLY_OPTIONS.get(component_type, {}),
+    }
+    for component_type, components in COMPONENTS.items()
+}
 REQUIRED_TYPES = tuple(COMPONENTS)
 POWER_REQUIREMENTS = {
     "ryzen-5-7600": 105,
@@ -72,7 +80,7 @@ POWER_REQUIREMENTS = {
     "compatible-cooling": 5,
     "regnum-400": 0,
 }
-PSU_CAPACITIES = {"psu-750": 750}
+PSU_CAPACITIES = {"psu-750": 750, "psu-900": 900}
 PURPOSES = {
     "gaming": "Gaming",
     "programming": "Programowanie",
@@ -111,11 +119,28 @@ def validate_purpose(purpose: str) -> str:
     return purpose
 
 
+def validate_budget(budget: int | float) -> int | float:
+    if (
+        isinstance(budget, bool)
+        or not isinstance(budget, (int, float))
+        or not math.isfinite(budget)
+        or budget < 0
+    ):
+        raise ValueError("budget must be a non-negative number")
+    return budget
+
+
 def component_type_for(model: str) -> str | None:
     if isinstance(model, str) and model.lower().startswith(("ddr4-", "ddr5-")):
         return "ram"
+    if model in PSU_CAPACITIES:
+        return "psu"
     return next(
-        (component_type for component_type, components in COMPONENTS.items() if model in components),
+        (
+            component_type
+            for component_type, components in COMPONENTS_BY_TYPE.items()
+            if model in components
+        ),
         None,
     )
 
@@ -309,8 +334,9 @@ def catalog_products(products: list[dict]) -> list[dict]:
 def catalog_options(catalog: list[dict], imported_products: list[dict] | None = None) -> list[dict]:
     """Add known models to buyer options without changing the imported catalog."""
     options = list(catalog)
+    used_ids = {product["id"] for product in options}
     imported_models = {product.get("model") for product in imported_products or []}
-    for component_type, components in {**COMPONENTS, **BUILDER_ONLY_OPTIONS}.items():
+    for component_type, components in COMPONENTS_BY_TYPE.items():
         existing = [product for product in catalog if product["type"] == component_type]
         if not existing:
             continue
@@ -320,6 +346,8 @@ def catalog_options(catalog: list[dict], imported_products: list[dict] | None = 
         for model, details in components.items():
             if model in known_models or model in imported_models:
                 continue
+            while f"{id_prefix}-{next_index}" in used_ids:
+                next_index += 1
             options.append({
                 "id": f"{id_prefix}-{next_index}",
                 "type": component_type,
@@ -327,6 +355,7 @@ def catalog_options(catalog: list[dict], imported_products: list[dict] | None = 
                 "name": details["name"],
                 "price": details["price"],
             })
+            used_ids.add(f"{id_prefix}-{next_index}")
             next_index += 1
     return options
 
@@ -345,13 +374,8 @@ def build_from_selections(
     if not isinstance(selections, dict):
         raise ValueError("selections must be an object")
     validate_purpose(purpose)
-    if budget is not None and (
-        isinstance(budget, bool)
-        or not isinstance(budget, (int, float))
-        or not math.isfinite(budget)
-        or budget < 0
-    ):
-        raise ValueError("budget must be a non-negative number")
+    if budget is not None:
+        validate_budget(budget)
     by_id = {product["id"]: product for product in catalog}
     if set(selections) != set(REQUIRED_TYPES):
         raise ValueError("one selection is required for each component type")
@@ -378,6 +402,29 @@ def build_from_selections(
     return result
 
 
+def recommend_set(catalog: list[dict], purpose: str, budget: int | float) -> dict:
+    """Choose the least expensive complete catalog combination within budget."""
+    validate_purpose(purpose)
+    validate_budget(budget)
+    options = [
+        [product for product in catalog if product["type"] == component_type]
+        for component_type in REQUIRED_TYPES
+    ]
+    if any(not products for products in options):
+        raise ValueError("complete catalog is required for recommendation")
+    candidates = []
+    for products in itertools.product(*options):
+        total = sum(product["price"] for product in products)
+        if total <= budget:
+            selections = {product["type"]: product["id"] for product in products}
+            candidate = build_from_selections(selections, catalog, purpose, budget)
+            if candidate["analysis"]["status"] == "compatible":
+                candidates.append(candidate)
+    if not candidates:
+        raise ValueError("no complete set fits the budget")
+    return min(candidates, key=lambda result: result["total"])
+
+
 PAGE = """<!doctype html>
 <html lang='pl'>
 <head>
@@ -400,7 +447,7 @@ PAGE = """<!doctype html>
   <header><h1>Buduj PC</h1><p class='lead'>Sprawdz kompatybilnosc zestawu na biezaco.</p></header>
   <main>
     <section id='selectors'></section>
-    <section class='summary' aria-live='polite'><label for='purpose'>Przeznaczenie zestawu</label><select id='purpose'><option value='gaming'>Gaming</option><option value='programming'>Programowanie</option></select><label for='budget'>Maksymalny budzet (PLN)</label><input id='budget' type='number' min='0' step='1' placeholder='Podaj budzet'><p id='budget-summary'></p><strong id='status'>Wybierz czesci...</strong><p id='total'></p><p id='power'></p><p id='balance'></p><div id='issue'></div><ul id='build-products'></ul></section>
+    <section class='summary' aria-live='polite'><label for='purpose'>Przeznaczenie zestawu</label><select id='purpose'><option value='gaming'>Gaming</option><option value='programming'>Programowanie</option></select><label for='budget'>Maksymalny budzet (PLN)</label><input id='budget' type='number' min='0' step='1' placeholder='Podaj budzet'><button id='recommend' type='button'>Dobierz najtanszy zestaw</button><p id='budget-summary'></p><strong id='status'>Wybierz czesci...</strong><p id='total'></p><p id='power'></p><p id='balance'></p><div id='issue'></div><ul id='build-products'></ul></section>
     <section class='summary'>
       <button id='import' type='button'>Importuj odpowiedz x-kom</button>
       <p id='import-status' aria-live='polite'></p>
@@ -423,10 +470,17 @@ PAGE = """<!doctype html>
     let catalog = [];
     let buildCatalog = [];
      const purposeOptions = [...document.querySelectorAll('#purpose option')];
-    const preparedResponse = { products: [
-      { id: 'offer-1', model: 'ryzen-5-7600', name: 'AMD Ryzen 5 7600 BOX', price: 799, source: 'x-kom' },
-      { id: 'offer-2', model: 'ryzen-5-7600', name: 'AMD 7600 3.8 GHz', price: 829, source: 'prepared-shop' }
-    ] };
+     const preparedResponse = { products: [
+       { id: 'offer-1', model: 'ryzen-5-7600', name: 'AMD Ryzen 5 7600 BOX', price: 799, source: 'x-kom' },
+       { id: 'offer-2', model: 'ryzen-5-7600', name: 'AMD 7600 3.8 GHz', price: 829, source: 'prepared-shop' },
+       { id: 'offer-3', model: 'b650', name: 'MSI B650 Gaming Plus WiFi', price: 699, source: 'prepared-shop' },
+       { id: 'offer-4', model: 'ddr5-6000', name: 'Kingston Fury DDR5 32 GB', price: 499, source: 'prepared-shop' },
+       { id: 'offer-5', model: 'rtx-4070', name: 'GeForce RTX 4070', price: 2399, source: 'prepared-shop' },
+       { id: 'offer-6', model: 'nvme-1tb', name: 'Samsung 990 EVO 1 TB', price: 399, source: 'prepared-shop' },
+       { id: 'offer-7', model: 'psu-900', name: 'be quiet! Pure Power 12 M 900W', price: 449, source: 'prepared-shop' },
+       { id: 'offer-8', model: 'compatible-cooling', name: 'Kompatybilne chlodzenie', price: 199, source: 'prepared-shop' },
+       { id: 'offer-9', model: 'regnum-400', name: 'Endorfy Regnum 400 ARGB', price: 299, source: 'prepared-shop' }
+     ] };
     function renderImportedProducts(products) {
       const list = document.querySelector('#import-products');
       list.replaceChildren();
@@ -519,6 +573,42 @@ PAGE = """<!doctype html>
         products.append(item);
       });
     }
+     async function recommendSet() {
+        const budgetInput = document.querySelector('#budget');
+        const budget = budgetInput.value === '' ? null : Number(budgetInput.value);
+        const purpose = document.querySelector('#purpose').value;
+        if (budget === null || !Number.isFinite(budget) || budget < 0) return;
+        try {
+          const response = await fetch('/api/recommend', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ purpose, budget })
+          });
+          const recommendation = await response.json();
+          if (!response.ok) throw new Error(recommendation.error || 'Dobor zestawu nie powiodl sie');
+          const productsById = Object.fromEntries(buildCatalog.map(product => [product.id, product]));
+          const selections = Object.fromEntries(
+            recommendation.products.map(id => [productsById[id]?.type, id])
+          );
+          if (requiredTypes.some(type => !selections[type])) {
+            throw new Error('Odpowiedz doboru nie zawiera kompletnego zestawu');
+          }
+          requiredTypes.forEach(type => {
+            const select = document.querySelector(`#${type}`);
+            if (select) select.value = selections[type];
+          });
+          await refreshBuild();
+        } catch (error) {
+          document.querySelector('#status').textContent = `Blad doboru: ${error.message}`;
+          document.querySelector('#status').className = 'blocked';
+          document.querySelector('#budget-summary').textContent = '';
+          document.querySelector('#total').textContent = '';
+          document.querySelector('#power').textContent = '';
+          document.querySelector('#balance').textContent = '';
+          document.querySelector('#issue').replaceChildren();
+          document.querySelector('#build-products').replaceChildren();
+        }
+     }
     async function importCatalog() {
       const status = document.querySelector('#import-status');
       status.textContent = 'Importowanie...';
@@ -560,6 +650,7 @@ PAGE = """<!doctype html>
     document.querySelector('#import').addEventListener('click', importCatalog);
     document.querySelector('#purpose').addEventListener('change', refreshBuild);
     document.querySelector('#budget').addEventListener('change', refreshBuild);
+    document.querySelector('#recommend').addEventListener('click', recommendSet);
     refreshCatalog();
   </script>
 </body>
@@ -596,7 +687,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         request = urlparse(self.path)
-        if request.path not in ("/api/import", "/api/build"):
+        if request.path not in ("/api/import", "/api/build", "/api/recommend"):
             self.respond(HTTPStatus.NOT_FOUND, "text/plain", b"Not found")
             return
         try:
@@ -605,6 +696,14 @@ class Handler(BaseHTTPRequestHandler):
             if request.path == "/api/build":
                 result = build_from_selections(
                     payload.get("selections"),
+                    BUILD_CATALOG,
+                    payload.get("purpose", "gaming"),
+                    payload.get("budget"),
+                )
+                self.respond(HTTPStatus.OK, "application/json", json.dumps(result).encode())
+                return
+            if request.path == "/api/recommend":
+                result = recommend_set(
                     BUILD_CATALOG,
                     payload.get("purpose", "gaming"),
                     payload.get("budget"),
