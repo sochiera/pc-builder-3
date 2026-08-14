@@ -57,6 +57,7 @@ class BuilderSmokeTest(unittest.TestCase):
                         window.__importBodies = [];
                         window.__fetchPaths = [];
                         const originalFetch = window.fetch;
+                        window.__realFetch = originalFetch;
                         window.fetch = async (...args) => {
                             window.__fetchPaths.push(args[0]);
                             if (args[0] === '/api/import') {
@@ -177,7 +178,7 @@ class BuilderSmokeTest(unittest.TestCase):
             else:
                 self.fail("Application did not start")
 
-            with urlopen(f"{base_url}/api/analyse?cpu=ryzen-5-7600&motherboard=z790") as response:
+            with urlopen(f"{base_url}/api/analyse?cpu=ryzen-5-7600&motherboard=z790&ram=ddr5-6000") as response:
                 build = json.load(response)
             self.assertEqual(build["status"], "blocked")
             self.assertEqual(build["total"], 1648)
@@ -220,6 +221,44 @@ class BuilderSmokeTest(unittest.TestCase):
         finally:
             process.terminate()
             process.wait(timeout=3)
+
+    def test_analysis_marks_missing_and_conflicting_data_as_undetermined(self):
+        from app import analyse
+
+        cases = {
+            "missing RAM standard": {
+                "ram_id": None,
+                "selected_components": None,
+                "reason": "RAM",
+            },
+            "conflicting RAM values": {
+                "ram_id": "ddr5-6000",
+                "selected_components": [{"type": "ram", "model": "ddr4-3200"}],
+                "reason": "RAM",
+            },
+            "conflicting RAM values with socket conflict": {
+                "ram_id": "ddr5-6000",
+                "selected_components": [{"type": "ram", "model": "ddr4-3200"}],
+                "cpu": "core-i5-14600k",
+                "motherboard": "b650",
+                "reason": "RAM",
+            },
+        }
+
+        for case, data in cases.items():
+            with self.subTest(case=case):
+                result = analyse(
+                    data.get("cpu", "core-i5-14600k"),
+                    data.get("motherboard", "z790"),
+                    data["ram_id"],
+                    data["selected_components"],
+                )
+                self.assertEqual(result["status"], "undetermined", f"{case} does not confirm compatibility")
+                self.assertTrue(result["issues"], f"{case} provides a reason")
+                self.assertTrue(
+                    any(data["reason"] in issue["message"] for issue in result["issues"]),
+                    f"{case} identifies the uncertain data",
+                )
 
     def test_analysis_exposes_blocker_warning_and_information_with_reasons(self):
         from app import analyse
@@ -758,6 +797,7 @@ class BuilderSmokeTest(unittest.TestCase):
                     "script": """
                         window.__buildBodies = [];
                         const originalFetch = window.fetch;
+                        window.__realFetch = originalFetch;
                         window.fetch = async (...args) => {
                             if (args[0] === '/api/build') window.__buildBodies.push(JSON.parse(args[1].body));
                             return originalFetch(...args);
@@ -871,6 +911,61 @@ class BuilderSmokeTest(unittest.TestCase):
                         item["text"],
                         "each analysis level has a visible label for the buyer",
                     )
+            self.webdriver(
+                "POST", f"{base}/execute/sync",
+                {
+                    "script": """
+                        window.fetch = async (url) => {
+                            if (url === '/api/build') {
+                                return new Response(JSON.stringify({
+                                    products: ['cpu-1', 'board-1', 'ram-1', 'gpu-1', 'disk-1', 'psu-1', 'cooler-1', 'case-1'],
+                                    total: 5742,
+                                    analysis: {
+                                        status: 'undetermined',
+                                        power_required: 900,
+                                        psu_power: 750,
+                                        issues: [{level: 'warning', message: 'Nierozstrzygnieta zgodnosc RAM: brak standardu RAM potrzebnego do oceny zgodnosci.'}]
+                                    }
+                                }), {headers: {'Content-Type': 'application/json'}});
+                            }
+                            return window.__realFetch(url);
+                        };
+                        document.querySelector('#ram').dispatchEvent(new Event('change', {bubbles: true}));
+                    """,
+                    "args": [],
+                },
+            )
+            for _ in range(20):
+                undetermined_summary = self.webdriver(
+                    "POST", f"{base}/execute/sync", {"script": "return document.querySelector('.summary').textContent", "args": []}
+                )["value"]
+                if "Nierozstrzygnieta" in undetermined_summary:
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail("undetermined analysis does not render a distinct buyer-facing state")
+            self.assertIn("Nierozstrzygnieta", undetermined_summary, "undetermined analysis has a distinct status")
+            self.assertNotIn("Konfiguracja zablokowana", undetermined_summary, "undetermined analysis is not presented as blocked")
+            self.assertIn("brak standardu RAM", undetermined_summary, "undetermined analysis keeps its explanation")
+            self.assertEqual(
+                self.webdriver(
+                    "POST", f"{base}/execute/sync", {"script": "return document.querySelector('#status').className", "args": []}
+                )["value"],
+                "undetermined",
+                "undetermined analysis uses a distinct status class",
+            )
+            self.webdriver(
+                "POST", f"{base}/execute/sync",
+                {
+                    "script": """
+                        window.fetch = async (...args) => {
+                            if (args[0] === '/api/build') window.__buildBodies.push(JSON.parse(args[1].body));
+                            return window.__realFetch(...args);
+                        };
+                    """,
+                    "args": [],
+                },
+            )
             self.webdriver(
                 "POST", f"{base}/execute/sync",
                 {"script": "const ram = document.querySelector('#ram'); ram.value = 'ram-2'; ram.dispatchEvent(new Event('change', {bubbles: true}));", "args": []},

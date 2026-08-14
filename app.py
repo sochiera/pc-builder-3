@@ -95,11 +95,24 @@ def analyse(
     motherboard = MOTHERBOARDS[motherboard_id]
     issues = []
     compatibility_reasons = []
+    uncertainty_reasons = []
     if cpu["socket"] != motherboard["socket"]:
         compatibility_reasons.append(
             f"procesor wymaga socketu {cpu['socket']}, a motherboard ma {motherboard['socket']}"
         )
     standard = ram_standard(ram_id)
+    selected_ram = next(
+        (component for component in selected_components or [] if component.get("type") == "ram"),
+        None,
+    )
+    if ram_id is None:
+        uncertainty_reasons.append("brak standardu RAM potrzebnego do oceny zgodnosci")
+    elif selected_ram and selected_ram.get("model") != ram_id:
+        uncertainty_reasons.append(
+            f"sprzeczne wartosci RAM: parametr {ram_id} oraz wybrany modul {selected_ram.get('model')}"
+        )
+    elif standard is None:
+        uncertainty_reasons.append(f"nierozpoznany standard RAM w parametrze {ram_id}")
     if standard and standard not in motherboard["ram_standards"]:
         compatibility_reasons.append(
             f"RAM w standardzie {standard} nie jest obslugiwany przez motherboard {motherboard_id}"
@@ -127,6 +140,11 @@ def analyse(
             "level": "blocker",
             "message": "Blokada zgodnosci zestawu: " + "; ".join(compatibility_reasons) + ".",
         })
+    if uncertainty_reasons:
+        issues.append({
+            "level": "warning",
+            "message": "Nierozstrzygnieta zgodnosc RAM: " + "; ".join(uncertainty_reasons) + ".",
+        })
     if selected_components:
         issues.extend([
             {
@@ -138,11 +156,17 @@ def analyse(
                 "message": f"Informacja: analiza obejmuje {len(selected_components)} wybranych elementow zestawu.",
             },
         ])
+    if uncertainty_reasons:
+        status = "undetermined"
+    elif any(issue["level"] == "blocker" for issue in issues):
+        status = "blocked"
+    else:
+        status = "compatible"
     return {
         "cpu": cpu,
         "motherboard": motherboard,
         "total": total,
-        "status": "blocked" if any(issue["level"] == "blocker" for issue in issues) else "compatible",
+        "status": status,
         "issues": issues,
         "power_required": power_required,
         "psu_power": psu_power,
@@ -264,7 +288,7 @@ PAGE = """<!doctype html>
     h1 { margin: 0; } .lead { color: #a9b6be; }
     main { display: grid; gap: 1rem; } label, .summary { background: #1a2228; border-radius: .5rem; padding: 1rem; }
     select { display: block; width: 100%; margin-top: .5rem; padding: .65rem; border-radius: .3rem; }
-    .summary { border: 1px solid #2d3a42; } .ok { color: #62e3a0; } .blocked { color: #ff8d7a; }
+     .summary { border: 1px solid #2d3a42; } .ok { color: #62e3a0; } .blocked { color: #ff8d7a; } .undetermined { color: #ffd166; }
     button { padding: .65rem 1rem; border: 0; border-radius: .3rem; cursor: pointer; }
     #import-products { margin: .5rem 0 0; padding-left: 1.25rem; }
   </style>
@@ -341,9 +365,14 @@ PAGE = """<!doctype html>
         body: JSON.stringify({ selections })
       });
       const build = await response.json();
-      const status = document.querySelector('#status');
-      status.textContent = build.analysis.status === 'compatible' ? 'Kompatybilny zestaw' : 'Konfiguracja zablokowana';
-      status.className = build.analysis.status === 'compatible' ? 'ok' : 'blocked';
+       const status = document.querySelector('#status');
+       const statusPresentation = {
+         compatible: { label: 'Kompatybilny zestaw', className: 'ok' },
+         blocked: { label: 'Konfiguracja zablokowana', className: 'blocked' },
+         undetermined: { label: 'Nierozstrzygnieta zgodnosc', className: 'undetermined' },
+       }[build.analysis.status] || { label: 'Konfiguracja zablokowana', className: 'blocked' };
+       status.textContent = statusPresentation.label;
+       status.className = statusPresentation.className;
       document.querySelector('#total').textContent = `Suma: ${build.total} PLN`;
       document.querySelector('#power').textContent = `Zapotrzebowanie: ${build.analysis.power_required} W | PSU: ${build.analysis.psu_power} W`;
       const issueList = document.querySelector('#issue');

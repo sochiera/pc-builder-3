@@ -61,7 +61,7 @@ Jako kupujacy chce widziec osobno blokady, ostrzezenia i informacje z uzasadnien
 - Sprawdzenie: otworz przygotowany zestaw zawierajacy po jednym komunikacie kazdego poziomu i sprawdz ich odrebne oznaczenie oraz tresc uzasadnienia.
 - Poza zakresem: konfigurowalne poziomy, ukrywanie komunikatow i ranking problemow.
 
-## US-008 — Uzytkownik widzi niepewna ocene danych [nowa]
+## US-008 — Uzytkownik widzi niepewna ocene danych [do weryfikacji]
 
 Jako kupujacy chce zostac ostrzezony, gdy brakuje danych albo dane sobie przecza, zeby brak informacji nie wygladal jak potwierdzona zgodnosc.
 
