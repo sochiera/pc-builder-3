@@ -504,9 +504,9 @@ PAGE = """<!doctype html>
         list.append(item);
       });
     }
-    function renderSelectors(products) {
-      const container = document.querySelector('#selectors');
-      container.replaceChildren();
+     function renderSelectors(products) {
+       const container = document.querySelector('#selectors');
+       container.replaceChildren();
       requiredTypes.forEach(type => {
         const options = buildCatalog.filter(item => item.type === type);
         const label = document.createElement('label');
@@ -521,12 +521,29 @@ PAGE = """<!doctype html>
         });
         select.addEventListener('change', refreshBuild);
         label.append(select);
-        container.append(label);
-      });
-    }
-    async function refreshBuild() {
-      const selections = Object.fromEntries(requiredTypes.map(type => [type, document.querySelector(`#${type}`).value]));
-      if (Object.values(selections).some(value => !value)) return;
+         container.append(label);
+       });
+     }
+      function clearBuildSummary() {
+       const status = document.querySelector('#status');
+       status.textContent = 'Wybierz czesci...';
+       status.className = '';
+       document.querySelector('#budget-summary').textContent = '';
+       document.querySelector('#total').textContent = '';
+       document.querySelector('#power').textContent = '';
+       document.querySelector('#balance').textContent = '';
+       document.querySelector('#issue').replaceChildren();
+        document.querySelector('#build-products').replaceChildren();
+      }
+      let buildRefreshGeneration = 0;
+      let catalogRefreshGeneration = 0;
+      async function refreshBuild() {
+        const refreshGeneration = ++buildRefreshGeneration;
+        const selections = Object.fromEntries(requiredTypes.map(type => [type, document.querySelector(`#${type}`).value]));
+       if (Object.values(selections).some(value => !value)) {
+         clearBuildSummary();
+         return;
+       }
       const purpose = document.querySelector('#purpose').value;
       if (!purposeOptions.some(option => option.value === purpose)) return;
       const budgetInput = document.querySelector('#budget');
@@ -536,9 +553,10 @@ PAGE = """<!doctype html>
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ selections, purpose, budget })
-      });
-      const build = await response.json();
-       const status = document.querySelector('#status');
+       });
+       const build = await response.json();
+       if (refreshGeneration !== buildRefreshGeneration) return;
+        const status = document.querySelector('#status');
        const statusPresentation = {
          compatible: { label: 'Kompatybilny zestaw', className: 'ok' },
          blocked: { label: 'Konfiguracja zablokowana', className: 'blocked' },
@@ -624,12 +642,12 @@ PAGE = """<!doctype html>
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(preparedResponse)
         });
-        const report = await response.json();
-        if (!response.ok) throw new Error(report.error || 'Import nie powiodl sie');
-        status.textContent = `Zaimportowano: ${report.count}`;
-        renderImportedProducts(report.products);
-        await refreshCatalog();
-      } catch (error) {
+         const report = await response.json();
+         if (!response.ok) throw new Error(report.error || 'Import nie powiodl sie');
+         renderImportedProducts(report.products);
+         await refreshCatalog();
+         status.textContent = `Zaimportowano: ${report.count}`;
+       } catch (error) {
         status.textContent = `Blad importu: ${error.message}`;
       }
     }
@@ -673,15 +691,32 @@ PAGE = """<!doctype html>
        });
        select.value = [...select.options].some(option => option.value === selectedType) ? selectedType : '';
      }
-     async function refreshCatalog() {
-       const response = await fetch('/api/catalog');
-       const report = await response.json();
-       if (!response.ok) throw new Error(report.error || 'Nie mozna otworzyc katalogu');
-         catalog = report.products;
-         buildCatalog = report.options;
-         renderCatalogTypeOptions();
-          filterCatalog();
-         renderSelectors(buildCatalog);
+      async function refreshCatalog() {
+        const refreshGeneration = ++catalogRefreshGeneration;
+        buildRefreshGeneration += 1;
+        const selectedValues = Object.fromEntries(
+         requiredTypes
+           .map(type => [type, document.querySelector(`#${type}`)?.value])
+           .filter(([, value]) => value)
+       );
+        const response = await fetch('/api/catalog');
+        const report = await response.json();
+        if (!response.ok) throw new Error(report.error || 'Nie mozna otworzyc katalogu');
+        if (refreshGeneration !== catalogRefreshGeneration) return;
+        catalog = report.products;
+       buildCatalog = report.options;
+       renderCatalogTypeOptions();
+       filterCatalog();
+       renderSelectors(buildCatalog);
+       requiredTypes.forEach(type => {
+         const select = document.querySelector(`#${type}`);
+         const selectedValue = selectedValues[type];
+         if (select && selectedValue && [...select.options].some(option => option.value === selectedValue)) {
+           select.value = selectedValue;
+         } else if (select && selectedValue) {
+           select.value = '';
+         }
+       });
        await refreshBuild();
      }
      document.querySelector('#import').addEventListener('click', importCatalog);

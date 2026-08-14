@@ -370,6 +370,112 @@ class BuilderSmokeTest(unittest.TestCase):
                 self.fail(f"recommendation did not render after import: {recommendation}")
             self.assertIn("kompatybilny", recommendation["status"].lower(), "recommended set is compatible")
             self.assertIn("5772 PLN", recommendation["total"], "recommended set renders its cheapest total")
+            self.webdriver(
+                "POST", f"{base}/execute/sync",
+                {
+                    "script": "for (const [id, text] of [['cpu', 'Intel Core i5-14600K'], ['motherboard', 'ASUS Prime Z790-P'], ['cooling', 'Kompatybilne chlodzenie']]) { const select = document.querySelector(`#${id}`); select.value = [...select.options].find(option => option.textContent.includes(text)).value; } document.querySelector('#cooling').dispatchEvent(new Event('change', {bubbles: true}));",
+                    "args": [],
+                },
+            )
+            for _ in range(20):
+                selected_build = self.webdriver(
+                    "POST", f"{base}/execute/sync",
+                    {"script": "return {products: document.querySelectorAll('#build-products li').length, summary: document.querySelector('.summary').textContent}", "args": []},
+                )["value"]
+                if selected_build["products"] == 8 and "6342 PLN" in selected_build["summary"]:
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail(f"selected build did not refresh after cooling change: {selected_build}")
+            selected_before_refresh = self.webdriver(
+                "POST", f"{base}/execute/sync",
+                {"script": "return Object.fromEntries([...document.querySelectorAll('#selectors select')].map(select => [select.id, select.value]))", "args": []},
+            )["value"]
+            self.webdriver(
+                "POST", f"{base}/execute/sync",
+                {"script": "document.querySelector('#import').click()", "args": []},
+            )
+            for _ in range(20):
+                refreshed_status = self.webdriver(
+                    "POST", f"{base}/execute/sync",
+                    {"script": "return document.querySelector('#import-status').textContent", "args": []},
+                )["value"]
+                if refreshed_status == "Zaimportowano: 8":
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail("catalog refresh did not complete after selecting a complete set")
+            selected_after_refresh = self.webdriver(
+                "POST", f"{base}/execute/sync",
+                {"script": "return Object.fromEntries([...document.querySelectorAll('#selectors select')].map(select => [select.id, select.value]))", "args": []},
+            )["value"]
+            self.assertEqual(
+                selected_after_refresh,
+                selected_before_refresh,
+                "catalog refresh preserves every still-available selected component",
+            )
+            refreshed_build = self.webdriver(
+                "POST", f"{base}/execute/sync",
+                {"script": "return {products: document.querySelectorAll('#build-products li').length, summary: document.querySelector('.summary').textContent}", "args": []},
+            )["value"]
+            self.assertEqual(refreshed_build["products"], 8, "catalog refresh keeps the complete selected set in the build")
+            self.assertIn("6342 PLN", refreshed_build["summary"], "catalog refresh keeps the current total in the summary")
+            self.webdriver(
+                "POST", f"{base}/execute/sync",
+                {
+                    "script": """
+                        const originalFetch = window.fetch;
+                        window.fetch = async (...args) => {
+                            const response = await originalFetch(...args);
+                            if (args[0] !== '/api/catalog') return response;
+                            const report = await response.json();
+                            return new Response(JSON.stringify({
+                                products: report.products.filter(product => product.type !== 'cpu'),
+                                options: report.options.filter(product => product.type !== 'cpu'),
+                            }), {status: response.status, headers: {'Content-Type': 'application/json'}});
+                        };
+                    """,
+                    "args": [],
+                },
+            )
+            self.webdriver(
+                "POST", f"{base}/execute/sync",
+                {"script": "document.querySelector('#import').click()", "args": []},
+            )
+            for _ in range(20):
+                changed_status = self.webdriver(
+                    "POST", f"{base}/execute/sync",
+                    {"script": "return document.querySelector('#import-status').textContent", "args": []},
+                )["value"]
+                if changed_status == "Zaimportowano: 8":
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail("catalog refresh with a missing selected part did not complete")
+            changed_selection = self.webdriver(
+                "POST", f"{base}/execute/sync",
+                {"script": "return Object.fromEntries([...document.querySelectorAll('#selectors select')].map(select => [select.id, select.value]))", "args": []},
+            )["value"]
+            self.assertNotEqual(
+                changed_selection["cpu"],
+                selected_before_refresh["cpu"],
+                "catalog refresh does not keep an unavailable CPU selected",
+            )
+            self.assertEqual(changed_selection["cpu"], "", "catalog refresh clears a selector with no available CPU")
+            for component_type, selected_value in selected_before_refresh.items():
+                if component_type != "cpu":
+                    self.assertEqual(
+                        changed_selection[component_type],
+                        selected_value,
+                        f"catalog refresh preserves the available {component_type} selection when another part disappears",
+                    )
+            changed_build = self.webdriver(
+                "POST", f"{base}/execute/sync",
+                {"script": "return {products: document.querySelectorAll('#build-products li').length, summary: document.querySelector('.summary').textContent, cpuOptions: [...document.querySelector('#cpu').options].map(option => option.value)}", "args": []},
+            )["value"]
+            self.assertEqual(changed_build["products"], 0, "catalog refresh clears the build when a required type has no options")
+            self.assertNotIn("6342 PLN", changed_build["summary"], "catalog refresh clears the stale build summary")
+            self.assertNotIn(selected_before_refresh["cpu"], changed_build["cpuOptions"], "unavailable CPU is absent from the refreshed selector")
         finally:
             if 'session_id' in locals():
                 try:
