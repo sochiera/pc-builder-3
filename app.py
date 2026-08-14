@@ -501,7 +501,8 @@ PAGE = """<!doctype html>
   <header><h1>Buduj PC</h1><p class='lead'>Sprawdz kompatybilnosc zestawu na biezaco.</p></header>
   <main>
     <section id='selectors'></section>
-    <section class='summary' aria-live='polite'><label for='purpose'>Przeznaczenie zestawu</label><select id='purpose'><option value='gaming'>Gaming</option><option value='programming'>Programowanie</option></select><label for='budget'>Maksymalny budzet (PLN)</label><input id='budget' type='number' min='0' step='1' placeholder='Podaj budzet'><button id='recommend' type='button'>Dobierz najtanszy zestaw</button><p id='budget-summary'></p><strong id='status'>Wybierz czesci...</strong><p id='total'></p><p id='power'></p><p id='balance'></p><div id='issue'></div><ul id='build-products'></ul></section>
+     <section id='base-build' class='summary' aria-live='polite'><label for='purpose'>Przeznaczenie zestawu</label><select id='purpose'><option value='gaming'>Gaming</option><option value='programming'>Programowanie</option></select><label for='budget'>Maksymalny budzet (PLN)</label><input id='budget' type='number' min='0' step='1' placeholder='Podaj budzet'><button id='recommend' type='button'>Dobierz najtanszy zestaw</button><p id='budget-summary'></p><strong id='status'>Wybierz czesci...</strong><p id='total'></p><p id='power'></p><p id='balance'></p><div id='issue'></div><ul id='build-products'></ul></section>
+     <section id='variants'></section>
     <section class='summary'>
       <button id='import' type='button'>Importuj odpowiedz x-kom</button>
       <p id='import-status' aria-live='polite'></p>
@@ -530,8 +531,10 @@ PAGE = """<!doctype html>
      const requiredTypes = componentDefinitions.map(([type]) => type);
      const typeNames = Object.fromEntries(componentDefinitions);
      const issueLabels = { blocker: 'Blokada', warning: 'Ostrzezenie', information: 'Informacja' };
-    let catalog = [];
-    let buildCatalog = [];
+     let catalog = [];
+      let buildCatalog = [];
+      let variantState = null;
+      let variantRefreshGeneration = 0;
      const purposeOptions = [...document.querySelectorAll('#purpose option')];
      const preparedResponse = { products: [
         { id: 'offer-1', model: 'ryzen-5-7600', name: 'AMD Ryzen 5 7600 BOX', price: 799, source: 'x-kom', url: 'https://x-kom.pl/p/offer-1' },
@@ -568,10 +571,10 @@ PAGE = """<!doctype html>
        container.replaceChildren();
       requiredTypes.forEach(type => {
         const options = buildCatalog.filter(item => item.type === type);
-        const label = document.createElement('label');
-        label.textContent = typeNames[type];
-        const select = document.createElement('select');
-        select.id = type;
+           const label = document.createElement('label');
+           label.textContent = typeNames[type];
+           const select = document.createElement('select');
+         select.id = type;
         options.forEach(product => {
           const option = document.createElement('option');
           option.value = product.id;
@@ -601,8 +604,12 @@ PAGE = """<!doctype html>
          status.className = 'blocked';
        }
        let buildRefreshGeneration = 0;
-      let catalogRefreshGeneration = 0;
-      async function refreshBuild() {
+       let catalogRefreshGeneration = 0;
+       function readBudget() {
+         const value = document.querySelector('#budget').value;
+         return value === '' ? null : Number(value);
+       }
+       async function refreshBuild() {
         const refreshGeneration = ++buildRefreshGeneration;
         const selections = Object.fromEntries(requiredTypes.map(type => [type, document.querySelector(`#${type}`).value]));
        if (Object.values(selections).some(value => !value)) {
@@ -611,8 +618,7 @@ PAGE = """<!doctype html>
        }
       const purpose = document.querySelector('#purpose').value;
       if (!purposeOptions.some(option => option.value === purpose)) return;
-      const budgetInput = document.querySelector('#budget');
-      const budget = budgetInput.value === '' ? null : Number(budgetInput.value);
+       const budget = readBudget();
       if (budget !== null && (!Number.isFinite(budget) || budget < 0)) return;
       const response = await fetch('/api/build', {
         method: 'POST',
@@ -654,16 +660,92 @@ PAGE = """<!doctype html>
        });
       const products = document.querySelector('#build-products');
       products.replaceChildren();
-      build.products.forEach(id => {
+       build.products.forEach(id => {
         const product = buildCatalog.find(item => item.id === id);
         const item = document.createElement('li');
         item.textContent = product ? product.name : id;
-        products.append(item);
-      });
-    }
+         products.append(item);
+       });
+       if (build.products.length === requiredTypes.length) renderVariantAction();
+     }
+      function renderVariantAction() {
+        if (document.querySelector('#create-variant')) return;
+        const button = document.createElement('button');
+        button.id = 'create-variant';
+        button.type = 'button';
+        button.textContent = 'Utworz wariant';
+        button.addEventListener('click', createVariant);
+        document.querySelector('#base-build').append(button);
+      }
+      function renderVariant() {
+        const container = document.querySelector('#variants');
+        container.replaceChildren();
+        if (!variantState) return;
+        const section = document.createElement('section');
+        section.id = 'variant-1';
+        section.className = 'summary';
+        const heading = document.createElement('h2');
+        heading.textContent = 'Wariant 1';
+        section.append(heading);
+        requiredTypes.forEach(type => {
+          const label = document.createElement('label');
+          label.textContent = typeNames[type];
+          const select = document.createElement('select');
+           select.id = `variant-${type}`;
+          buildCatalog.filter(item => item.type === type).forEach(product => {
+            select.append(new Option(`${product.name} - ${product.price} PLN`, product.id));
+          });
+          select.value = variantState.selections[type];
+          select.addEventListener('change', () => {
+            variantState.selections[type] = select.value;
+            refreshVariant();
+          });
+          label.append(select);
+          section.append(label);
+        });
+        const total = document.createElement('p');
+        total.id = 'variant-total';
+        total.textContent = variantState.build ? `Suma: ${variantState.build.total} PLN` : '';
+        section.append(total);
+        const products = document.createElement('ul');
+        variantState.build?.products.forEach(id => {
+          const product = buildCatalog.find(item => item.id === id);
+          const item = document.createElement('li');
+          item.textContent = product ? product.name : id;
+          products.append(item);
+        });
+        section.append(products);
+        container.append(section);
+      }
+      function createVariant() {
+        if (variantState) return;
+        variantState = {
+          selections: Object.fromEntries(requiredTypes.map(type => [type, document.querySelector(`#${type}`).value])),
+          build: null,
+        };
+        renderVariant();
+        refreshVariant();
+      }
+      async function refreshVariant() {
+        const refreshGeneration = ++variantRefreshGeneration;
+        if (!variantState) return;
+        const response = await fetch('/api/build', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            selections: variantState.selections,
+            purpose: document.querySelector('#purpose').value,
+            budget: readBudget(),
+          }),
+        });
+        if (!response.ok) return;
+        const build = await response.json();
+        if (refreshGeneration !== variantRefreshGeneration) return;
+        variantState.build = build;
+        renderVariant();
+      }
      async function recommendSet() {
-        const budgetInput = document.querySelector('#budget');
-        const budget = budgetInput.value === '' ? null : Number(budgetInput.value);
+         const budget = readBudget();
         const purpose = document.querySelector('#purpose').value;
         if (budget === null || !Number.isFinite(budget) || budget < 0) return;
         try {
@@ -819,10 +901,11 @@ PAGE = """<!doctype html>
              select.value = selectedValue;
            }
          });
-          filterCatalog();
-          renderComparison();
-          await refreshBuild();
-       }
+           await refreshBuild();
+           if (variantState) await refreshVariant();
+           filterCatalog();
+           renderComparison();
+        }
       function filterCatalog() {
        const fragment = document.querySelector('#catalog-search').value.trim().toLowerCase();
        const selectedType = document.querySelector('#catalog-type').value;

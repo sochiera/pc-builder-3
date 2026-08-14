@@ -2083,6 +2083,112 @@ class BuilderSmokeTest(unittest.TestCase):
             app_process.terminate()
             app_process.wait(timeout=3)
 
+    def test_buyer_can_create_gpu_variant_without_changing_base_build(self):
+        with socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            app_port = listener.getsockname()[1]
+        with socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            self.webdriver_port = listener.getsockname()[1]
+        app_process = subprocess.Popen([sys.executable, "app.py", "--port", str(app_port)], cwd=ROOT)
+        driver_process = subprocess.Popen(
+            ["geckodriver", "--port", str(self.webdriver_port)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            for _ in range(20):
+                try:
+                    with urlopen(f"http://127.0.0.1:{self.webdriver_port}/status", timeout=0.2):
+                        break
+                except OSError:
+                    time.sleep(0.1)
+            else:
+                self.skipTest("geckodriver is unavailable")
+            session = self.webdriver("POST", "/session", {"capabilities": {"alwaysMatch": {"browserName": "firefox"}}})
+            session_id = session["value"]["sessionId"]
+            base = f"/session/{session_id}"
+            self.webdriver("POST", f"{base}/url", {"url": f"http://127.0.0.1:{app_port}/"})
+            self.webdriver("POST", f"{base}/execute/sync", {"script": "document.querySelector('#import').click();", "args": []})
+            for _ in range(20):
+                status = self.webdriver(
+                    "POST", f"{base}/execute/sync",
+                    {"script": "return document.querySelector('#import-status').textContent", "args": []},
+                )["value"]
+                if status == "Zaimportowano: 9":
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail("prepared import did not finish")
+            self.webdriver(
+                "POST", f"{base}/execute/sync",
+                {"script": "document.querySelector('#purpose').value = 'gaming'; document.querySelector('#budget').value = '7000'; document.querySelector('#recommend').click();", "args": []},
+            )
+            for _ in range(20):
+                build = self.webdriver(
+                    "POST", f"{base}/execute/sync",
+                    {"script": "return {products: document.querySelectorAll('#build-products li').length, total: document.querySelector('#total').textContent}", "args": []},
+                )["value"]
+                if build["products"] == 8 and build["total"] == "Suma: 5772 PLN":
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail(f"complete prepared build did not render: {build}")
+
+            create_variant_buttons = self.webdriver(
+                "POST", f"{base}/execute/sync",
+                {"script": "return document.querySelectorAll('#create-variant').length", "args": []},
+            )["value"]
+            self.assertEqual(create_variant_buttons, 1, "complete build exposes one action to create a variant")
+            self.webdriver("POST", f"{base}/execute/sync", {"script": "document.querySelector('#create-variant').click();", "args": []})
+            for _ in range(20):
+                variant = self.webdriver(
+                    "POST", f"{base}/execute/sync",
+                    {"script": "return {base: document.querySelector('#base-build')?.textContent || '', variant: document.querySelector('#variant-1')?.textContent || ''}", "args": []},
+                )["value"]
+                if "Suma: 5772 PLN" in variant["variant"]:
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail("creating a variant did not render an independent variant")
+            self.assertIn("GeForce RTX 4070", variant["base"], "base build starts with the prepared GPU")
+            self.assertIn("GeForce RTX 4070", variant["variant"], "variant initially copies the complete base build")
+            self.assertIn("Suma: 5772 PLN", variant["variant"], "variant initially publishes the copied total")
+            variant_parts = self.webdriver(
+                "POST", f"{base}/execute/sync",
+                {"script": "return document.querySelectorAll('#variant-1 ul li').length", "args": []},
+            )["value"]
+            self.assertEqual(variant_parts, 8, "variant initially contains the complete base build")
+
+            self.webdriver(
+                "POST", f"{base}/execute/sync",
+                {"script": "const select = document.querySelector('#variant-1 select#variant-gpu'); const gpu = [...select.options].find(option => option.textContent.includes('GeForce RTX 4080')); select.value = gpu.value; select.dispatchEvent(new Event('change', {bubbles: true}));", "args": []},
+            )
+            for _ in range(20):
+                changed = self.webdriver(
+                    "POST", f"{base}/execute/sync",
+                    {"script": "return {base: document.querySelector('#base-build')?.textContent || '', variant: document.querySelector('#variant-1')?.textContent || '', selectedGpu: document.querySelector('#variant-1 select#variant-gpu')?.selectedOptions[0]?.textContent || ''}", "args": []},
+                )["value"]
+                if "GeForce RTX 4080" in changed["selectedGpu"] and "Suma: 6572 PLN" in changed["variant"]:
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail("changing the variant GPU did not refresh the variant")
+            self.assertIn("GeForce RTX 4070", changed["base"], "changing the variant leaves the base GPU unchanged")
+            self.assertIn("Suma: 5772 PLN", changed["base"], "changing the variant leaves the base total unchanged")
+            self.assertIn("GeForce RTX 4080", changed["variant"], "variant shows the independently selected GPU")
+            self.assertIn("Suma: 6572 PLN", changed["variant"], "variant publishes its own updated total")
+        finally:
+            if "session_id" in locals():
+                try:
+                    self.webdriver("DELETE", f"/session/{session_id}")
+                except OSError:
+                    pass
+            driver_process.terminate()
+            driver_process.wait(timeout=3)
+            app_process.terminate()
+            app_process.wait(timeout=3)
+
 
 if __name__ == "__main__":
     unittest.main()
