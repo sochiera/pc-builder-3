@@ -78,13 +78,13 @@ class BuilderSmokeTest(unittest.TestCase):
                 time.sleep(0.1)
             else:
                 self.fail("import result did not render")
-            self.assertEqual(status["value"], "Zaimportowano: 8", "full prepared response produces one product per model")
+            self.assertEqual(status["value"], "Zaimportowano: 9", "full prepared response produces one product per model")
             imported_payload = self.webdriver(
                 "POST",
                 f"{base}/execute/sync",
                 {"script": "return window.__importBodies[0]", "args": []},
             )["value"]
-            self.assertEqual(len(imported_payload["products"]), 9)
+            self.assertEqual(len(imported_payload["products"]), 10)
             self.assertEqual(
                 [offer["model"] for offer in imported_payload["products"][:2]],
                 ["ryzen-5-7600", "ryzen-5-7600"],
@@ -92,7 +92,7 @@ class BuilderSmokeTest(unittest.TestCase):
             )
             rendered = self.webdriver("POST", f"{base}/execute/sync", {"script": "return document.querySelector('#import-products').textContent", "args": []})
             product_count = self.webdriver("POST", f"{base}/execute/sync", {"script": "return document.querySelectorAll('#import-products li').length", "args": []})
-            self.assertEqual(product_count["value"], 8, "prepared response renders one catalog product per model")
+            self.assertEqual(product_count["value"], 9, "prepared response renders one catalog product per model")
             self.assertIn("AMD Ryzen 5 7600", rendered["value"])
             self.assertIn("AMD Ryzen 5 7600 BOX", rendered["value"], "rendered product includes first offer")
             self.assertIn("799 PLN", rendered["value"], "rendered product includes first offer price")
@@ -123,7 +123,7 @@ class BuilderSmokeTest(unittest.TestCase):
                     f"{base}/execute/sync",
                     {"script": "return document.querySelectorAll('#catalog-products li').length", "args": []},
                 )["value"],
-                8,
+                9,
                 "buyer view renders every imported product",
             )
             self.assertIn("cpu", catalog_rendered["value"])
@@ -246,7 +246,7 @@ class BuilderSmokeTest(unittest.TestCase):
                     f"{base}/execute/sync",
                     {"script": "return document.querySelector('#import-status').textContent", "args": []},
                 )
-                if refreshed_status["value"] == "Zaimportowano: 8":
+                if refreshed_status["value"] == "Zaimportowano: 9":
                     break
                 time.sleep(0.1)
             else:
@@ -400,7 +400,7 @@ class BuilderSmokeTest(unittest.TestCase):
                     "POST", f"{base}/execute/sync",
                     {"script": "return document.querySelector('#import-status').textContent", "args": []},
                 )["value"]
-                if refreshed_status == "Zaimportowano: 8":
+                if refreshed_status == "Zaimportowano: 9":
                     break
                 time.sleep(0.1)
             else:
@@ -447,7 +447,7 @@ class BuilderSmokeTest(unittest.TestCase):
                     "POST", f"{base}/execute/sync",
                     {"script": "return document.querySelector('#import-status').textContent", "args": []},
                 )["value"]
-                if changed_status == "Zaimportowano: 8":
+                if changed_status == "Zaimportowano: 9":
                     break
                 time.sleep(0.1)
             else:
@@ -520,7 +520,7 @@ class BuilderSmokeTest(unittest.TestCase):
                     f"{base}/execute/sync",
                     {"script": "return document.querySelector('#import-status').textContent", "args": []},
                 )["value"]
-                if status == "Zaimportowano: 8":
+                if status == "Zaimportowano: 9":
                     break
                 time.sleep(0.1)
             else:
@@ -595,6 +595,115 @@ class BuilderSmokeTest(unittest.TestCase):
             )
         finally:
             if 'session_id' in locals():
+                try:
+                    self.webdriver("DELETE", f"/session/{session_id}")
+                except OSError:
+                    pass
+            driver_process.terminate()
+            driver_process.wait(timeout=3)
+            app_process.terminate()
+            app_process.wait(timeout=3)
+
+    def test_buyer_can_compare_two_prepared_gpus_and_see_parameter_difference(self):
+        with socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            app_port = listener.getsockname()[1]
+        with socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            self.webdriver_port = listener.getsockname()[1]
+        app_process = subprocess.Popen([sys.executable, "app.py", "--port", str(app_port)], cwd=ROOT)
+        driver_process = subprocess.Popen(
+            ["geckodriver", "--port", str(self.webdriver_port)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            for _ in range(20):
+                try:
+                    with urlopen(f"http://127.0.0.1:{self.webdriver_port}/status", timeout=0.2):
+                        break
+                except OSError:
+                    time.sleep(0.1)
+            else:
+                self.skipTest("geckodriver is unavailable")
+            session = self.webdriver("POST", "/session", {"capabilities": {"alwaysMatch": {"browserName": "firefox"}}})
+            session_id = session["value"]["sessionId"]
+            base = f"/session/{session_id}"
+            self.webdriver("POST", f"{base}/url", {"url": f"http://127.0.0.1:{app_port}/"})
+            self.webdriver(
+                "POST",
+                f"{base}/execute/sync",
+                {
+                    "script": """
+                        document.querySelector('#import').click();
+                    """,
+                    "args": [],
+                },
+            )
+            for _ in range(20):
+                state = self.webdriver(
+                    "POST",
+                    f"{base}/execute/sync",
+                    {
+                        "script": """
+                            const first = document.querySelector('#compare-first');
+                            const second = document.querySelector('#compare-second');
+                            return {
+                              firstTag: first?.tagName || null,
+                              secondTag: second?.tagName || null,
+                              firstOptions: first ? [...first.options].map(option => option.textContent) : [],
+                              secondOptions: second ? [...second.options].map(option => option.textContent) : [],
+                              comparison: document.querySelector('#comparison')?.textContent || ''
+                            };
+                        """,
+                        "args": [],
+                    },
+                )["value"]
+                if state["firstTag"] and state["secondTag"]:
+                    break
+                time.sleep(0.1)
+            comparison_controls = state
+            self.webdriver(
+                "POST",
+                f"{base}/execute/sync",
+                {
+                    "script": """
+                        const first = document.querySelector('#compare-first');
+                        const second = document.querySelector('#compare-second');
+                        const firstOption = [...first.options].find(option => option.textContent.includes('GeForce RTX 4070'));
+                        const secondOption = [...second.options].find(option => option.textContent.includes('GeForce RTX 4080'));
+                        first.value = firstOption.value;
+                        first.dispatchEvent(new Event('change', {bubbles: true}));
+                        second.value = secondOption.value;
+                        second.dispatchEvent(new Event('change', {bubbles: true}));
+                    """,
+                    "args": [],
+                },
+            )
+            for _ in range(20):
+                comparison = self.webdriver(
+                    "POST", f"{base}/execute/sync",
+                    {"script": "return document.querySelector('#comparison')?.textContent || ''", "args": []},
+                )["value"]
+                if "GeForce RTX 4070" in comparison and "GeForce RTX 4080" in comparison:
+                    break
+                time.sleep(0.1)
+            with self.subTest("buyer can choose both prepared GPUs"):
+                self.assertEqual(comparison_controls["firstTag"], "SELECT", "comparison exposes a first GPU selector")
+                self.assertEqual(comparison_controls["secondTag"], "SELECT", "comparison exposes a second GPU selector")
+                self.assertTrue(any("GeForce RTX 4070" in option for option in comparison_controls["firstOptions"]))
+                self.assertTrue(any("GeForce RTX 4080" in option for option in comparison_controls["secondOptions"]))
+            with self.subTest("comparison shows names prices and key parameter"):
+                self.assertIn("GeForce RTX 4070", comparison)
+                self.assertIn("2399 PLN", comparison)
+                self.assertIn("GeForce RTX 4080", comparison)
+                self.assertIn("3199 PLN", comparison)
+                self.assertIn("12 GB VRAM", comparison)
+                self.assertIn("16 GB VRAM", comparison)
+            with self.subTest("comparison marks the parameter difference"):
+                self.assertRegex(comparison.lower(), r"roznic|different|diff")
+        finally:
+            if "session_id" in locals():
                 try:
                     self.webdriver("DELETE", f"/session/{session_id}")
                 except OSError:
@@ -1133,7 +1242,7 @@ class BuilderSmokeTest(unittest.TestCase):
                 {product["model"] for product in catalog["products"] if product["type"] == "motherboard"},
                 {"b650", "z790"},
             )
-            self.assertEqual(len(catalog["options"]), 11, "builder options reflect imported variants")
+            self.assertEqual(len(catalog["options"]), 12, "builder options reflect imported variants")
         finally:
             process.terminate()
             process.wait(timeout=3)
@@ -1343,8 +1452,8 @@ class BuilderSmokeTest(unittest.TestCase):
             self.assertEqual(recommendation["total"], 5742, "selection chooses the cheapest compatible combination")
             self.assertIn("psu-2", recommendation["products"], "selection uses the imported PSU with sufficient capacity")
             self.assertNotIn("psu-1", recommendation["products"], "selection rejects the insufficient PSU")
-            self.assertIn("cooler-1", recommendation["products"], "selection uses the compatible cooling option")
-            self.assertNotIn("cooler-2", recommendation["products"], "selection rejects the cheaper incompatible cooling option")
+            self.assertIn("cooling-2", recommendation["products"], "selection uses the compatible cooling option")
+            self.assertNotIn("cooling-1", recommendation["products"], "selection rejects the cheaper incompatible cooling option")
             self.assertEqual(recommendation["analysis"]["status"], "compatible", "selected combination is compatible")
 
             with socket() as listener:
@@ -1516,19 +1625,19 @@ class BuilderSmokeTest(unittest.TestCase):
             required_types = ["cpu", "motherboard", "ram", "gpu", "disk", "psu", "cooling", "case"]
             expected_ids = {
                 "cpu": "cpu-1",
-                "motherboard": "board-1",
+                "motherboard": "motherboard-1",
                 "ram": "ram-1",
                 "gpu": "gpu-1",
                 "disk": "disk-1",
                 "psu": "psu-1",
-                "cooling": "cooler-1",
+                "cooling": "cooling-1",
                 "case": "case-1",
             }
             expected_option_counts = {
                 "cpu": 2,
                 "motherboard": 2,
                 "ram": 2,
-                "gpu": 1,
+                "gpu": 2,
                 "disk": 1,
                 "psu": 1,
                 "cooling": 2,
@@ -1757,7 +1866,7 @@ class BuilderSmokeTest(unittest.TestCase):
                         window.fetch = async (url) => {
                             if (url === '/api/build') {
                                 return new Response(JSON.stringify({
-                                    products: ['cpu-1', 'board-1', 'ram-1', 'gpu-1', 'disk-1', 'psu-1', 'cooler-1', 'case-1'],
+                                    products: ['cpu-1', 'motherboard-1', 'ram-1', 'gpu-1', 'disk-1', 'psu-1', 'cooling-1', 'case-1'],
                                     total: 5742,
                                     analysis: {
                                         status: 'undetermined',
@@ -1856,18 +1965,18 @@ class BuilderSmokeTest(unittest.TestCase):
             self.assertIn("900 W | PSU: 750 W", compatible_summary, "RAM refresh preserves the current power assessment")
             self.webdriver(
                 "POST", f"{base}/execute/sync",
-                {"script": "const cooling = document.querySelector('#cooling'); cooling.value = 'cooler-2'; cooling.dispatchEvent(new Event('change', {bubbles: true}));", "args": []},
+                {"script": "const cooling = document.querySelector('#cooling'); cooling.value = 'cooling-2'; cooling.dispatchEvent(new Event('change', {bubbles: true}));", "args": []},
             )
             for _ in range(20):
                 bodies = self.webdriver(
                     "POST", f"{base}/execute/sync", {"script": "return window.__buildBodies", "args": []}
                 )["value"]
-                if bodies and bodies[-1]["selections"]["cooling"] == "cooler-2":
+                if bodies and bodies[-1]["selections"]["cooling"] == "cooling-2":
                     break
                 time.sleep(0.1)
             else:
                 self.fail("compatible cooling change does not refresh the build")
-            self.assertEqual(bodies[-1]["selections"]["cooling"], "cooler-2")
+            self.assertEqual(bodies[-1]["selections"]["cooling"], "cooling-2")
             for _ in range(20):
                 cooling_summary = self.webdriver(
                     "POST", f"{base}/execute/sync", {"script": "return document.querySelector('.summary').textContent", "args": []}
@@ -1912,13 +2021,13 @@ class BuilderSmokeTest(unittest.TestCase):
             self.assertIn("976 W | PSU: 750 W", blocked_summary, "changing the CPU refreshes the power assessment")
             self.webdriver(
                 "POST", f"{base}/execute/sync",
-                {"script": "const board = document.querySelector('#motherboard'); board.value = 'board-2'; board.dispatchEvent(new Event('change', {bubbles: true}));", "args": []},
+                {"script": "const board = document.querySelector('#motherboard'); board.value = 'motherboard-2'; board.dispatchEvent(new Event('change', {bubbles: true}));", "args": []},
             )
             for _ in range(20):
                 bodies = self.webdriver(
                     "POST", f"{base}/execute/sync", {"script": "return window.__buildBodies", "args": []}
                 )["value"]
-                if bodies[-1]["selections"]["motherboard"] == "board-2":
+                if bodies[-1]["selections"]["motherboard"] == "motherboard-2":
                     break
                 time.sleep(0.1)
             else:
@@ -1946,7 +2055,7 @@ class BuilderSmokeTest(unittest.TestCase):
             self.assertIn("976 W | PSU: 750 W", refreshed_summary, "motherboard refresh keeps the current power assessment")
             self.webdriver(
                 "POST", f"{base}/execute/sync",
-                {"script": "const board = document.querySelector('#motherboard'); board.value = 'board-1'; board.dispatchEvent(new Event('change', {bubbles: true}));", "args": []},
+                {"script": "const board = document.querySelector('#motherboard'); board.value = 'motherboard-1'; board.dispatchEvent(new Event('change', {bubbles: true}));", "args": []},
             )
             for _ in range(20):
                 incompatible_board_summary = self.webdriver(

@@ -26,7 +26,8 @@ RAM = {
 }
 
 GPUS = {
-    "rtx-4070": {"name": "GeForce RTX 4070", "price": 2399},
+    "rtx-4070": {"name": "GeForce RTX 4070", "price": 2399, "key_parameter": "12 GB VRAM"},
+    "rtx-4080": {"name": "GeForce RTX 4080", "price": 3199, "key_parameter": "16 GB VRAM"},
 }
 
 DISKS = {
@@ -322,6 +323,8 @@ def import_products(payload: dict) -> dict:
                 "name": CPUS.get(model, {}).get("name", offer["name"]),
                 "offers": [],
             }
+            if "key_parameter" in offer:
+                product["key_parameter"] = offer["key_parameter"]
             products_by_model[model] = product
             catalog.append(product)
         product["offers"].append(offer)
@@ -331,20 +334,25 @@ def import_products(payload: dict) -> dict:
 def catalog_products(products: list[dict]) -> list[dict]:
     """Expose one buyer-facing item per imported, recognized product."""
     catalog = []
+    type_indexes = {}
     for product in products:
         offers = product.get("offers")
         component_type = component_type_for(product.get("id"))
         priced_offers = [offer for offer in offers or [] if offer.get("price") is not None]
         if not priced_offers or component_type is None:
             continue
-        catalog.append({
-            "id": priced_offers[-1]["id"],
+        type_indexes[component_type] = type_indexes.get(component_type, 0) + 1
+        catalog_product = {
+            "id": f"{component_type}-{type_indexes[component_type]}",
             "type": component_type,
             "model": product["id"],
             "name": product["name"],
             "price": priced_offers[-1]["price"],
             "offers": priced_offers,
-        })
+        }
+        if "key_parameter" in product:
+            catalog_product["key_parameter"] = product["key_parameter"]
+        catalog.append(catalog_product)
     return catalog
 
 
@@ -481,9 +489,13 @@ PAGE = """<!doctype html>
     main { display: grid; gap: 1rem; } label, .summary { background: #1a2228; border-radius: .5rem; padding: 1rem; }
     select { display: block; width: 100%; margin-top: .5rem; padding: .65rem; border-radius: .3rem; }
      .summary { border: 1px solid #2d3a42; } .ok { color: #62e3a0; } .blocked { color: #ff8d7a; } .undetermined { color: #ffd166; }
-    button { padding: .65rem 1rem; border: 0; border-radius: .3rem; cursor: pointer; }
-    #import-products { margin: .5rem 0 0; padding-left: 1.25rem; }
-  </style>
+     button { padding: .65rem 1rem; border: 0; border-radius: .3rem; cursor: pointer; }
+     #import-products { margin: .5rem 0 0; padding-left: 1.25rem; }
+     #comparison { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+     #comparison > section { background: #1a2228; border: 1px solid #2d3a42; border-radius: .5rem; padding: 1rem; }
+     #comparison > p { grid-column: 1 / -1; margin: 0; }
+     @media (max-width: 600px) { #comparison { grid-template-columns: 1fr; } #comparison > p { grid-column: auto; } }
+   </style>
 </head>
 <body>
   <header><h1>Buduj PC</h1><p class='lead'>Sprawdz kompatybilnosc zestawu na biezaco.</p></header>
@@ -503,7 +515,12 @@ PAGE = """<!doctype html>
        <select id='catalog-type'><option value=''>Wszystkie typy</option></select>
        <ul id='catalog-products'></ul>
      </section>
-  </main>
+      <section class='summary'>
+        <h2>Porownaj karty graficzne</h2>
+        <div id='comparison-controls'></div>
+        <div id='comparison' aria-live='polite'></div>
+      </section>
+   </main>
   <script>
      const componentDefinitions = [
        ['cpu', 'Procesor'], ['motherboard', 'Plyta glowna'], ['ram', 'Pamiec RAM'],
@@ -521,11 +538,12 @@ PAGE = """<!doctype html>
         { id: 'offer-2', model: 'ryzen-5-7600', name: 'AMD 7600 3.8 GHz', price: 829, source: 'prepared-shop', url: 'https://prepared-shop.example/oferta/offer-2' },
        { id: 'offer-3', model: 'b650', name: 'MSI B650 Gaming Plus WiFi', price: 699, source: 'prepared-shop' },
        { id: 'offer-4', model: 'ddr5-6000', name: 'Kingston Fury DDR5 32 GB', price: 499, source: 'prepared-shop' },
-       { id: 'offer-5', model: 'rtx-4070', name: 'GeForce RTX 4070', price: 2399, source: 'prepared-shop' },
-       { id: 'offer-6', model: 'nvme-1tb', name: 'Samsung 990 EVO 1 TB', price: 399, source: 'prepared-shop' },
-       { id: 'offer-7', model: 'psu-900', name: 'be quiet! Pure Power 12 M 900W', price: 449, source: 'prepared-shop' },
-       { id: 'offer-8', model: 'compatible-cooling', name: 'Kompatybilne chlodzenie', price: 199, source: 'prepared-shop' },
-       { id: 'offer-9', model: 'regnum-400', name: 'Endorfy Regnum 400 ARGB', price: 299, source: 'prepared-shop' }
+        { id: 'offer-5', model: 'rtx-4070', name: 'GeForce RTX 4070', price: 2399, source: 'prepared-shop', key_parameter: '12 GB VRAM' },
+        { id: 'offer-6', model: 'rtx-4080', name: 'GeForce RTX 4080', price: 3199, source: 'prepared-shop', key_parameter: '16 GB VRAM' },
+        { id: 'offer-7', model: 'nvme-1tb', name: 'Samsung 990 EVO 1 TB', price: 399, source: 'prepared-shop' },
+        { id: 'offer-8', model: 'psu-900', name: 'be quiet! Pure Power 12 M 900W', price: 449, source: 'prepared-shop' },
+        { id: 'offer-9', model: 'compatible-cooling', name: 'Kompatybilne chlodzenie', price: 199, source: 'prepared-shop' },
+        { id: 'offer-10', model: 'regnum-400', name: 'Endorfy Regnum 400 ARGB', price: 299, source: 'prepared-shop' }
      ] };
     function renderImportedProducts(products) {
       const list = document.querySelector('#import-products');
@@ -717,8 +735,64 @@ PAGE = """<!doctype html>
           if (product.last_checked) {
             item.append(document.createTextNode(` Sprawdzono: ${product.last_checked}`));
           }
-          list.append(item);
+         list.append(item);
+       });
+      }
+      function renderComparison() {
+        const comparison = document.querySelector('#comparison');
+        const controls = document.querySelector('#comparison-controls');
+        const gpus = catalog.filter(product => product.type === 'gpu');
+        if (!gpus.length) {
+          controls.replaceChildren();
+          comparison.textContent = 'Brak kart graficznych do porownania.';
+          return;
+        }
+        let firstSelect = document.querySelector('#compare-first');
+        let secondSelect = document.querySelector('#compare-second');
+        const previousFirst = firstSelect?.value;
+        const previousSecond = secondSelect?.value;
+        if (!firstSelect || !secondSelect) {
+          const firstLabel = document.createElement('label');
+          firstLabel.textContent = 'Pierwsza karta';
+          firstSelect = document.createElement('select');
+          firstSelect.id = 'compare-first';
+          firstLabel.append(firstSelect);
+          const secondLabel = document.createElement('label');
+          secondLabel.textContent = 'Druga karta';
+          secondSelect = document.createElement('select');
+          secondSelect.id = 'compare-second';
+          secondLabel.append(secondSelect);
+          controls.replaceChildren(firstLabel, secondLabel);
+          firstSelect.addEventListener('change', renderComparison);
+          secondSelect.addEventListener('change', renderComparison);
+        }
+        firstSelect.replaceChildren();
+        secondSelect.replaceChildren();
+        const fillOptions = (select, valueFor) => gpus.forEach(product => {
+          const label = `${product.name} - ${product.price} PLN`;
+          select.append(new Option(label, valueFor(product)));
         });
+        fillOptions(firstSelect, product => product.model);
+        fillOptions(secondSelect, product => product.id);
+        firstSelect.value = gpus.some(product => product.model === previousFirst)
+          ? previousFirst : gpus[0].model;
+        secondSelect.value = gpus.some(product => product.id === previousSecond)
+          ? previousSecond : (gpus[1] || gpus[0]).id;
+        const first = gpus.find(product => product.model === firstSelect.value);
+        const second = gpus.find(product => product.id === secondSelect.value);
+        comparison.replaceChildren();
+        [first, second].forEach(product => {
+          const card = document.createElement('section');
+          card.textContent = `${product.name} - ${product.price} PLN | ${product.key_parameter || 'Parametr kluczowy niedostepny'}`;
+          comparison.append(card);
+        });
+        const difference = document.createElement('p');
+        if (first.key_parameter === second.key_parameter) {
+          difference.textContent = `Brak roznic parametru: ${first.key_parameter || 'nieznany'}`;
+        } else {
+          difference.textContent = `Roznica parametru: ${first.key_parameter || 'nieznany'} vs ${second.key_parameter || 'nieznany'}`;
+        }
+        comparison.append(difference);
       }
       async function refreshProduct(productId) {
         const response = await fetch('/api/refresh', {
@@ -745,8 +819,9 @@ PAGE = """<!doctype html>
              select.value = selectedValue;
            }
          });
-         filterCatalog();
-         await refreshBuild();
+          filterCatalog();
+          renderComparison();
+          await refreshBuild();
        }
       function filterCatalog() {
        const fragment = document.querySelector('#catalog-search').value.trim().toLowerCase();
@@ -780,9 +855,10 @@ PAGE = """<!doctype html>
         if (!response.ok) throw new Error(report.error || 'Nie mozna otworzyc katalogu');
         if (refreshGeneration !== catalogRefreshGeneration) return;
         catalog = report.products;
-       buildCatalog = report.options;
-       renderCatalogTypeOptions();
-       filterCatalog();
+        buildCatalog = report.options;
+        renderCatalogTypeOptions();
+        filterCatalog();
+        renderComparison();
        renderSelectors(buildCatalog);
        requiredTypes.forEach(type => {
          const select = document.querySelector(`#${type}`);
@@ -797,7 +873,7 @@ PAGE = """<!doctype html>
      }
      document.querySelector('#import').addEventListener('click', importCatalog);
      document.querySelector('#catalog-search').addEventListener('input', filterCatalog);
-     document.querySelector('#catalog-type').addEventListener('change', filterCatalog);
+      document.querySelector('#catalog-type').addEventListener('change', filterCatalog);
     document.querySelector('#purpose').addEventListener('change', refreshBuild);
     document.querySelector('#budget').addEventListener('change', refreshBuild);
     document.querySelector('#recommend').addEventListener('click', recommendSet);
