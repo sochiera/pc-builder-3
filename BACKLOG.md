@@ -178,7 +178,7 @@ Jako kupujacy chce porownac dwa zamienniki dla jednego miejsca w aktualnym zesta
 - Sprawdzenie: w przygotowanym kompletnym zestawie porownaj dwie plyty glowne, z ktorych jedna pasuje do CPU, a druga nie, i sprawdz obok siebie wynik zgodnosci z uzasadnieniem oraz laczna cene zestawu dla kazdej opcji.
 - Poza zakresem: zastosowanie zamiennika do zestawu, porownanie wiecej niz dwoch opcji i automatyczna rekomendacja lepszej czesci.
 
-## US-025 — Uzytkownik porownuje oplacalnosc komponentow [do weryfikacji]
+## US-025 — Uzytkownik porownuje oplacalnosc komponentow [zrobiona]
 
 Jako kupujacy chce porownac koszt i przydatnosc dwoch komponentow dla wybranego zastosowania, zeby swiadomie zdecydowac, czy drozsza opcja daje mi istotna korzysc.
 
