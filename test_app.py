@@ -926,6 +926,45 @@ class BuilderSmokeTest(unittest.TestCase):
             self.assertIn("Konfiguracja zablokowana", page)
             self.assertIn("900 W | PSU: 750 W", page, "initial analysis renders the current power reserve")
             self.assertIn("Przeznaczenie: gaming", page, "initial analysis renders the default purpose")
+            budget_control = self.webdriver(
+                "POST", f"{base}/execute/sync",
+                {"script": "return document.querySelector('#budget') !== null", "args": []},
+            )
+            self.assertTrue(budget_control["value"], "builder provides a control for the maximum budget")
+            self.webdriver(
+                "POST", f"{base}/execute/sync",
+                {
+                    "script": "const budget = document.querySelector('#budget'); if (budget) { budget.value = '5600'; budget.dispatchEvent(new Event('change', {bubbles: true})); }",
+                    "args": [],
+                },
+            )
+            for _ in range(20):
+                budget_summary = self.webdriver(
+                    "POST", f"{base}/execute/sync", {"script": "return document.querySelector('.summary').textContent", "args": []}
+                )["value"]
+                if "142 PLN" in budget_summary:
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail("budget change does not render the current overage")
+            self.assertIn("5600", budget_summary, "summary keeps the entered maximum budget visible")
+            self.assertIn("Przekroczono", budget_summary, "summary labels an over-budget build")
+            budget_bodies = self.webdriver(
+                "POST", f"{base}/execute/sync", {"script": "return window.__buildBodies", "args": []}
+            )["value"]
+            self.assertTrue(
+                any(body.get("budget") == 5600 for body in budget_bodies),
+                "budget change sends the entered limit to the build endpoint",
+            )
+            budget_responses = self.webdriver(
+                "POST", f"{base}/execute/sync", {"script": "return window.__buildResponses", "args": []}
+            )["value"]
+            overage_response = next(
+                (response for response in budget_responses if response.get("budget", {}).get("overage") == 142),
+                None,
+            )
+            self.assertIsNotNone(overage_response, "build endpoint returns the current budget overage")
+            self.assertEqual(overage_response["budget"]["limit"], 5600)
             self.webdriver(
                 "POST", f"{base}/execute/sync",
                 {
@@ -1090,7 +1129,9 @@ class BuilderSmokeTest(unittest.TestCase):
                     "script": """
                         window.fetch = async (...args) => {
                             if (args[0] === '/api/build') window.__buildBodies.push(JSON.parse(args[1].body));
-                            return window.__realFetch(...args);
+                            const response = await window.__realFetch(...args);
+                            if (args[0] === '/api/build') window.__buildResponses.push(await response.clone().json());
+                            return response;
                         };
                     """,
                     "args": [],
@@ -1111,6 +1152,23 @@ class BuilderSmokeTest(unittest.TestCase):
                 self.fail("RAM change does not refresh the compatibility analysis")
             self.assertIn("RAM", ram_summary, "RAM change renders the involved component")
             self.assertIn("b650", ram_summary, "RAM change identifies the affected motherboard")
+            for _ in range(20):
+                cheaper_budget_summary = self.webdriver(
+                    "POST", f"{base}/execute/sync", {"script": "return document.querySelector('.summary').textContent", "args": []}
+                )["value"]
+                if "58 PLN" in cheaper_budget_summary:
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail("cheaper component change does not update the budget relation")
+            self.assertIn("Pozostaly", cheaper_budget_summary, "summary labels the remaining budget after a cheaper selection")
+            cheaper_responses = self.webdriver(
+                "POST", f"{base}/execute/sync", {"script": "return window.__buildResponses", "args": []}
+            )["value"]
+            self.assertTrue(
+                any(response.get("budget", {}).get("remaining") == 58 for response in cheaper_responses),
+                "build endpoint returns the remaining budget after a cheaper selection",
+            )
             self.webdriver(
                 "POST", f"{base}/execute/sync",
                 {"script": "const ram = document.querySelector('#ram'); ram.value = 'ram-1'; ram.dispatchEvent(new Event('change', {bubbles: true}));", "args": []},

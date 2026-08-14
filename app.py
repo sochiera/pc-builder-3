@@ -3,6 +3,7 @@
 
 import argparse
 import json
+import math
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
@@ -287,10 +288,27 @@ def catalog_options(catalog: list[dict], imported_products: list[dict] | None = 
     return options
 
 
-def build_from_selections(selections: dict, catalog: list[dict], purpose: str = "gaming") -> dict:
+def budget_relation(total: int | float, budget: int | float) -> dict:
+    difference = budget - total
+    return {"limit": budget, "remaining" if difference >= 0 else "overage": abs(difference)}
+
+
+def build_from_selections(
+    selections: dict,
+    catalog: list[dict],
+    purpose: str = "gaming",
+    budget: int | float | None = None,
+) -> dict:
     if not isinstance(selections, dict):
         raise ValueError("selections must be an object")
     validate_purpose(purpose)
+    if budget is not None and (
+        isinstance(budget, bool)
+        or not isinstance(budget, (int, float))
+        or not math.isfinite(budget)
+        or budget < 0
+    ):
+        raise ValueError("budget must be a non-negative number")
     by_id = {product["id"]: product for product in catalog}
     if set(selections) != set(REQUIRED_TYPES):
         raise ValueError("one selection is required for each component type")
@@ -306,12 +324,15 @@ def build_from_selections(selections: dict, catalog: list[dict], purpose: str = 
     analysis = analyse(cpu["model"], motherboard["model"], ram["model"], selected, purpose)
     total = sum(product["price"] for product in selected)
     analysis["total"] = total
-    return {
+    result = {
         "products": [product["id"] for product in selected],
         "total": total,
         "purpose": purpose,
         "analysis": analysis,
     }
+    if budget is not None:
+        result["budget"] = budget_relation(total, budget)
+    return result
 
 
 PAGE = """<!doctype html>
@@ -336,7 +357,7 @@ PAGE = """<!doctype html>
   <header><h1>Buduj PC</h1><p class='lead'>Sprawdz kompatybilnosc zestawu na biezaco.</p></header>
   <main>
     <section id='selectors'></section>
-    <section class='summary' aria-live='polite'><label for='purpose'>Przeznaczenie zestawu</label><select id='purpose'><option value='gaming'>Gaming</option><option value='programming'>Programowanie</option></select><strong id='status'>Wybierz czesci...</strong><p id='total'></p><p id='power'></p><div id='issue'></div><ul id='build-products'></ul></section>
+    <section class='summary' aria-live='polite'><label for='purpose'>Przeznaczenie zestawu</label><select id='purpose'><option value='gaming'>Gaming</option><option value='programming'>Programowanie</option></select><label for='budget'>Maksymalny budzet (PLN)</label><input id='budget' type='number' min='0' step='1' placeholder='Podaj budzet'><p id='budget-summary'></p><strong id='status'>Wybierz czesci...</strong><p id='total'></p><p id='power'></p><div id='issue'></div><ul id='build-products'></ul></section>
     <section class='summary'>
       <button id='import' type='button'>Importuj odpowiedz x-kom</button>
       <p id='import-status' aria-live='polite'></p>
@@ -406,10 +427,13 @@ PAGE = """<!doctype html>
       if (Object.values(selections).some(value => !value)) return;
       const purpose = document.querySelector('#purpose').value;
       if (!purposeOptions.some(option => option.value === purpose)) return;
+      const budgetInput = document.querySelector('#budget');
+      const budget = budgetInput.value === '' ? null : Number(budgetInput.value);
+      if (budget !== null && (!Number.isFinite(budget) || budget < 0)) return;
       const response = await fetch('/api/build', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ selections, purpose })
+        body: JSON.stringify({ selections, purpose, budget })
       });
       const build = await response.json();
        const status = document.querySelector('#status');
@@ -421,6 +445,15 @@ PAGE = """<!doctype html>
        status.textContent = statusPresentation.label;
        status.className = statusPresentation.className;
       document.querySelector('#total').textContent = `Suma: ${build.total} PLN`;
+      const budgetSummary = document.querySelector('#budget-summary');
+      if (build.budget) {
+        const relation = build.budget.remaining !== undefined
+          ? `Pozostaly budzet: ${build.budget.remaining} PLN`
+          : `Przekroczono budzet o: ${build.budget.overage} PLN`;
+        budgetSummary.textContent = `Budzet: ${build.budget.limit} PLN | ${relation}`;
+      } else {
+        budgetSummary.textContent = '';
+      }
       document.querySelector('#power').textContent = `Przeznaczenie: ${build.purpose} | Zapotrzebowanie: ${build.analysis.power_required} W | PSU: ${build.analysis.psu_power} W`;
       const issueList = document.querySelector('#issue');
       issueList.replaceChildren();
@@ -479,6 +512,7 @@ PAGE = """<!doctype html>
     }
     document.querySelector('#import').addEventListener('click', importCatalog);
     document.querySelector('#purpose').addEventListener('change', refreshBuild);
+    document.querySelector('#budget').addEventListener('change', refreshBuild);
     refreshCatalog();
   </script>
 </body>
@@ -522,7 +556,12 @@ class Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", "0"))
             payload = json.loads(self.rfile.read(length))
             if request.path == "/api/build":
-                result = build_from_selections(payload.get("selections"), BUILD_CATALOG, payload.get("purpose", "gaming"))
+                result = build_from_selections(
+                    payload.get("selections"),
+                    BUILD_CATALOG,
+                    payload.get("purpose", "gaming"),
+                    payload.get("budget"),
+                )
                 self.respond(HTTPStatus.OK, "application/json", json.dumps(result).encode())
                 return
             report = import_products(payload)
