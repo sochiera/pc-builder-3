@@ -18,6 +18,18 @@ MOTHERBOARDS = {
     "z790": {"name": "ASUS Prime Z790-P", "socket": "LGA1700", "price": 849},
 }
 
+COMPONENTS = {
+    "cpu": CPUS,
+    "motherboard": MOTHERBOARDS,
+}
+
+
+def component_type_for(model: str) -> str | None:
+    return next(
+        (component_type for component_type, components in COMPONENTS.items() if model in components),
+        None,
+    )
+
 
 def analyse(cpu_id: str, motherboard_id: str) -> dict:
     """Return the build summary used by both the browser and the HTTP test."""
@@ -51,7 +63,12 @@ def import_products(payload: dict) -> dict:
     products_by_model = {}
     for offer in products:
         model = offer.get("model")
-        if not isinstance(model, str) or not model or model not in CPUS:
+        if (
+            not isinstance(model, str)
+            or not model
+            or component_type_for(model) is None
+            or offer.get("price") is None
+        ):
             catalog.append(offer)
             continue
         product = products_by_model.get(model)
@@ -65,6 +82,25 @@ def import_products(payload: dict) -> dict:
             catalog.append(product)
         product["offers"].append(offer)
     return {"products": catalog, "count": len(catalog)}
+
+
+def catalog_products(products: list[dict]) -> list[dict]:
+    """Expose one buyer-facing item per imported, recognized product."""
+    catalog = []
+    for product in products:
+        offers = product.get("offers")
+        component_type = component_type_for(product.get("id"))
+        priced_offers = [offer for offer in offers or [] if offer.get("price") is not None]
+        if not priced_offers or component_type is None:
+            continue
+        catalog.append({
+            "id": product["id"],
+            "type": component_type,
+            "model": product["id"],
+            "name": product["name"],
+            "price": priced_offers[-1]["price"],
+        })
+    return catalog
 
 
 PAGE = """<!doctype html>
@@ -101,6 +137,10 @@ PAGE = """<!doctype html>
       <button id='import' type='button'>Importuj odpowiedz x-kom</button>
       <p id='import-status' aria-live='polite'></p>
       <ul id='import-products'></ul>
+    </section>
+    <section class='summary'>
+      <h2>Katalog czesci</h2>
+      <ul id='catalog-products'></ul>
     </section>
   </main>
   <script>
@@ -151,15 +191,34 @@ PAGE = """<!doctype html>
         if (!response.ok) throw new Error(report.error || 'Import nie powiodl sie');
         status.textContent = `Zaimportowano: ${report.count}`;
         renderImportedProducts(report.products);
+        await refreshCatalog();
       } catch (error) {
         status.textContent = `Blad importu: ${error.message}`;
       }
+    }
+    function renderCatalog(products) {
+      const list = document.querySelector('#catalog-products');
+      list.replaceChildren();
+      products.forEach(product => {
+        const item = document.createElement('li');
+        item.textContent = `${product.type} - ${product.model} - ${product.price} PLN`;
+        list.append(item);
+      });
+    }
+    async function refreshCatalog() {
+      const response = await fetch('/api/catalog');
+      const catalog = await response.json();
+      if (!response.ok) throw new Error(catalog.error || 'Nie mozna otworzyc katalogu');
+      renderCatalog(catalog.products);
     }
     document.querySelector('#import').addEventListener('click', importCatalog);
     cpu.addEventListener('change', refresh); motherboard.addEventListener('change', refresh); refresh();
   </script>
 </body>
 </html>"""
+
+
+IMPORTED_CATALOG = []
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -177,6 +236,9 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self.respond(HTTPStatus.OK, "application/json", json.dumps(result).encode())
             return
+        if request.path == "/api/catalog":
+            self.respond(HTTPStatus.OK, "application/json", json.dumps({"products": IMPORTED_CATALOG}).encode())
+            return
         self.respond(HTTPStatus.NOT_FOUND, "text/plain", b"Not found")
 
     def do_POST(self):
@@ -188,6 +250,7 @@ class Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", "0"))
             payload = json.loads(self.rfile.read(length))
             report = import_products(payload)
+            IMPORTED_CATALOG[:] = catalog_products(report["products"])
         except (ValueError, TypeError, KeyError, json.JSONDecodeError) as error:
             body = json.dumps({"error": str(error)}).encode()
             self.respond(HTTPStatus.BAD_REQUEST, "application/json", body)

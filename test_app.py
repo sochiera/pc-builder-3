@@ -55,8 +55,10 @@ class BuilderSmokeTest(unittest.TestCase):
                 {
                     "script": """
                         window.__importBodies = [];
+                        window.__fetchPaths = [];
                         const originalFetch = window.fetch;
                         window.fetch = async (...args) => {
+                            window.__fetchPaths.push(args[0]);
                             if (args[0] === '/api/import') {
                                 window.__importBodies.push(JSON.parse(args[1].body));
                             }
@@ -97,6 +99,35 @@ class BuilderSmokeTest(unittest.TestCase):
             self.assertIn("AMD 7600 3.8 GHz", rendered["value"], "rendered product includes second offer")
             self.assertIn("829 PLN", rendered["value"], "rendered product includes second offer price")
             self.assertIn("prepared-shop", rendered["value"], "rendered product includes second offer source")
+            for _ in range(20):
+                catalog_rendered = self.webdriver(
+                    "POST",
+                    f"{base}/execute/sync",
+                    {"script": "return document.querySelector('#catalog-products')?.textContent || ''", "args": []},
+                )
+                if "ryzen-5-7600" in catalog_rendered["value"]:
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail("catalog did not render after import")
+            fetch_paths = self.webdriver(
+                "POST",
+                f"{base}/execute/sync",
+                {"script": "return window.__fetchPaths", "args": []},
+            )["value"]
+            self.assertIn("/api/catalog", fetch_paths, "buyer view reads the catalog endpoint")
+            self.assertEqual(
+                self.webdriver(
+                    "POST",
+                    f"{base}/execute/sync",
+                    {"script": "return document.querySelectorAll('#catalog-products li').length", "args": []},
+                )["value"],
+                1,
+                "buyer view renders one item for the two offers",
+            )
+            self.assertIn("cpu", catalog_rendered["value"])
+            self.assertIn("ryzen-5-7600", catalog_rendered["value"])
+            self.assertIn("829 PLN", catalog_rendered["value"])
             self.webdriver("POST", f"{base}/execute/sync", {"script": "window.fetch = async () => new Response(JSON.stringify({error: 'bad response'}), {status: 400}); document.querySelector('#import').click()", "args": []})
             for _ in range(20):
                 error = self.webdriver("POST", f"{base}/execute/sync", {"script": "return document.querySelector('#import-status').textContent", "args": []})
@@ -158,7 +189,7 @@ class BuilderSmokeTest(unittest.TestCase):
     def test_import_reports_every_product_and_import_count(self):
         payload = {
             "products": [
-                {"id": "cpu-1", "name": "AMD Ryzen 5 7600"},
+                {"id": "cpu-1", "model": "ryzen-5-7600", "name": "AMD Ryzen 5 7600"},
                 {"id": "board-1", "name": "MSI B650 Gaming Plus WiFi"},
             ]
         }
@@ -194,6 +225,12 @@ class BuilderSmokeTest(unittest.TestCase):
             self.assertEqual(status, 200, "operator can run the prepared x-kom import")
             self.assertEqual(report["products"], payload["products"], "report contains every imported product")
             self.assertEqual(report["count"], len(payload["products"]), "report contains the imported item count")
+
+            with urlopen(f"{base_url}/api/catalog") as response:
+                catalog_status = response.status
+                catalog = json.load(response)
+            self.assertEqual(catalog_status, 200, "catalog projection does not invalidate a successful import")
+            self.assertEqual(catalog["products"], [], "catalog omits a recognized offer without a price")
 
             invalid_request = Request(
                 f"{base_url}/api/import",
@@ -296,6 +333,77 @@ class BuilderSmokeTest(unittest.TestCase):
             )
             self.assertEqual(report["products"][2], payload["products"][3])
             self.assertEqual(report["products"][3], payload["products"][4])
+        finally:
+            process.terminate()
+            process.wait(timeout=3)
+
+    def test_catalog_exposes_one_product_with_current_offer_price_after_import(self):
+        payload = {
+            "products": [
+                {
+                    "id": "offer-1",
+                    "model": "ryzen-5-7600",
+                    "name": "AMD Ryzen 5 7600 BOX",
+                    "price": 799,
+                    "source": "x-kom",
+                },
+                {
+                    "id": "offer-2",
+                    "model": "ryzen-5-7600",
+                    "name": "AMD 7600 3.8 GHz",
+                    "price": 829,
+                    "source": "prepared-shop",
+                },
+                {
+                    "id": "offer-board",
+                    "model": "b650",
+                    "name": "MSI B650 Gaming Plus WiFi",
+                    "price": 699,
+                    "source": "prepared-shop",
+                },
+            ]
+        }
+        with socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            port = listener.getsockname()[1]
+        base_url = f"http://127.0.0.1:{port}"
+        process = subprocess.Popen([sys.executable, "app.py", "--port", str(port)], cwd=ROOT)
+        try:
+            for _ in range(20):
+                try:
+                    with urlopen(f"{base_url}/", timeout=0.2):
+                        break
+                except OSError:
+                    time.sleep(0.1)
+            else:
+                self.fail("Application did not start")
+
+            request = Request(
+                f"{base_url}/api/import",
+                data=json.dumps(payload).encode(),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urlopen(request) as response:
+                self.assertEqual(response.status, 200, "catalog can be opened after import")
+
+            try:
+                with urlopen(f"{base_url}/api/catalog") as response:
+                    catalog_status = response.status
+                    catalog = json.load(response)
+            except HTTPError as error:
+                catalog_status = error.code
+                catalog = {}
+
+            self.assertEqual(catalog_status, 200, "catalog is available after import")
+            self.assertEqual(len(catalog["products"]), 2, "each supported prepared part appears once")
+            cpu, motherboard = catalog["products"]
+            self.assertEqual(cpu["type"], "cpu", "catalog identifies the CPU type")
+            self.assertEqual(cpu["model"], "ryzen-5-7600", "catalog identifies the CPU model")
+            self.assertEqual(cpu["price"], 829, "catalog shows the current CPU offer price")
+            self.assertEqual(motherboard["type"], "motherboard", "catalog identifies the motherboard type")
+            self.assertEqual(motherboard["model"], "b650", "catalog identifies the motherboard model")
+            self.assertEqual(motherboard["price"], 699, "catalog shows the motherboard offer price")
         finally:
             process.terminate()
             process.wait(timeout=3)
