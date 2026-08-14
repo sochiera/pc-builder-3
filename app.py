@@ -37,6 +37,11 @@ PSUS = {
 COOLING = {
     "fortis-5": {"name": "Endorfy Fortis 5", "price": 199},
 }
+BUILDER_ONLY_OPTIONS = {
+    "cooling": {
+        "compatible-cooling": {"name": "Kompatybilne chlodzenie", "price": 199},
+    },
+}
 
 CASES = {
     "regnum-400": {"name": "Endorfy Regnum 400 ARGB", "price": 299},
@@ -63,9 +68,14 @@ POWER_REQUIREMENTS = {
     "rtx-4070": 650,
     "nvme-1tb": 10,
     "fortis-5": 5,
+    "compatible-cooling": 5,
     "regnum-400": 0,
 }
 PSU_CAPACITIES = {"psu-750": 750}
+THREE_PART_DEPENDENCIES = {
+    ("ryzen-5-7600", "b650", "fortis-5"):
+        "wybrane chlodzenie nie jest zgodne z wymaganiami tego polaczenia procesora i plyty glownej",
+}
 
 
 def component_type_for(model: str) -> str | None:
@@ -82,6 +92,13 @@ def ram_standard(ram_id: str | None) -> str | None:
         return None
     standard = ram_id.split("-", 1)[0].upper()
     return standard if standard in {"DDR4", "DDR5"} else None
+
+
+def selected_component(selected_components: list[dict] | None, component_type: str) -> dict | None:
+    return next(
+        (component for component in selected_components or [] if component.get("type") == component_type),
+        None,
+    )
 
 
 def analyse(
@@ -101,10 +118,8 @@ def analyse(
             f"procesor wymaga socketu {cpu['socket']}, a motherboard ma {motherboard['socket']}"
         )
     standard = ram_standard(ram_id)
-    selected_ram = next(
-        (component for component in selected_components or [] if component.get("type") == "ram"),
-        None,
-    )
+    selected_ram = selected_component(selected_components, "ram")
+    selected_cooling = selected_component(selected_components, "cooling")
     if ram_id is None:
         uncertainty_reasons.append("brak standardu RAM potrzebnego do oceny zgodnosci")
     elif selected_ram and selected_ram.get("model") != ram_id:
@@ -120,6 +135,13 @@ def analyse(
     if standard and standard not in cpu["ram_standards"]:
         compatibility_reasons.append(
             f"cpu {cpu_id} nie obsluguje RAM w standardzie {standard}"
+        )
+    dependency_key = (cpu_id, motherboard_id, selected_cooling.get("model")) if selected_cooling else None
+    dependency_reason = THREE_PART_DEPENDENCIES.get(dependency_key)
+    if dependency_reason:
+        compatibility_reasons.append(
+            f"zaleznosc CPU-plyta-chlodzenie: {cpu_id}, {motherboard_id} i "
+            f"{selected_cooling['model']} - {dependency_reason}"
         )
     total = cpu["price"] + motherboard["price"]
     components = selected_components or [
@@ -226,10 +248,11 @@ def catalog_products(products: list[dict]) -> list[dict]:
     return catalog
 
 
-def catalog_options(catalog: list[dict]) -> list[dict]:
+def catalog_options(catalog: list[dict], imported_products: list[dict] | None = None) -> list[dict]:
     """Add known models to buyer options without changing the imported catalog."""
     options = list(catalog)
-    for component_type, components in COMPONENTS.items():
+    imported_models = {product.get("model") for product in imported_products or []}
+    for component_type, components in {**COMPONENTS, **BUILDER_ONLY_OPTIONS}.items():
         existing = [product for product in catalog if product["type"] == component_type]
         if not existing:
             continue
@@ -237,7 +260,7 @@ def catalog_options(catalog: list[dict]) -> list[dict]:
         known_models = {product["model"] for product in existing}
         next_index = len(existing) + 1
         for model, details in components.items():
-            if model in known_models:
+            if model in known_models or model in imported_models:
                 continue
             options.append({
                 "id": f"{id_prefix}-{next_index}",
@@ -484,7 +507,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             report = import_products(payload)
             IMPORTED_CATALOG[:] = catalog_products(report["products"])
-            BUILD_CATALOG[:] = catalog_options(IMPORTED_CATALOG)
+            BUILD_CATALOG[:] = catalog_options(IMPORTED_CATALOG, report["products"])
         except (ValueError, TypeError, KeyError, json.JSONDecodeError) as error:
             body = json.dumps({"error": str(error)}).encode()
             self.respond(HTTPStatus.BAD_REQUEST, "application/json", body)

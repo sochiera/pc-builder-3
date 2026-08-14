@@ -317,6 +317,43 @@ class BuilderSmokeTest(unittest.TestCase):
             "a compatible build still exposes non-blocking message levels",
         )
 
+    def test_analysis_reports_cpu_motherboard_cooling_dependency_and_refreshes(self):
+        from app import analyse
+
+        conflicting_components = [
+            {"type": "cpu", "model": "ryzen-5-7600"},
+            {"type": "motherboard", "model": "b650"},
+            {"type": "ram", "model": "ddr5-6000"},
+            {"type": "cooling", "model": "fortis-5"},
+        ]
+        compatible_components = [
+            *conflicting_components[:3],
+            {"type": "cooling", "model": "compatible-cooling"},
+        ]
+
+        blocked = analyse("ryzen-5-7600", "b650", "ddr5-6000", conflicting_components)
+        self.assertEqual(blocked["status"], "blocked", "the prepared three-part dependency blocks the build")
+        blocker_messages = [
+            issue["message"] for issue in blocked["issues"] if issue["level"] == "blocker"
+        ]
+        self.assertTrue(blocker_messages, "the dependency exposes a blocker explanation")
+        dependency_message = " ".join(blocker_messages)
+        for component in ("ryzen-5-7600", "b650", "fortis-5"):
+            with self.subTest(component=component):
+                self.assertIn(component, dependency_message, "the explanation names every involved part")
+        self.assertRegex(
+            dependency_message.lower(),
+            r"socket|chlod|cool|wysok|wysoko|zgod",
+            "the blocker explains why the three selected parts conflict",
+        )
+
+        refreshed = analyse("ryzen-5-7600", "b650", "ddr5-6000", compatible_components)
+        self.assertNotEqual(refreshed["status"], "blocked", "a compatible cooling choice clears the dependency blocker")
+        self.assertFalse(
+            any(issue["level"] == "blocker" for issue in refreshed["issues"]),
+            "the refreshed analysis no longer reports the dependency as a blocker",
+        )
+
     def test_import_reports_every_product_and_import_count(self):
         payload = {
             "products": [
@@ -551,6 +588,7 @@ class BuilderSmokeTest(unittest.TestCase):
                 {"id": "disk-1", "model": "nvme-1tb", "name": "Samsung 990 EVO 1 TB", "price": 399},
                 {"id": "psu-1", "model": "psu-750", "name": "be quiet! Pure Power 12 M 750W", "price": 449},
                 {"id": "cooler-1", "model": "fortis-5", "name": "Endorfy Fortis 5", "price": 199},
+                {"id": "cooler-2", "model": "compatible-cooling", "name": "Kompatybilne chlodzenie", "price": 249},
                 {"id": "case-1", "model": "regnum-400", "name": "Endorfy Regnum 400 ARGB", "price": 299},
             ]
         }
@@ -824,7 +862,7 @@ class BuilderSmokeTest(unittest.TestCase):
                 "gpu": 1,
                 "disk": 1,
                 "psu": 1,
-                "cooling": 1,
+                "cooling": 2,
                 "case": 1,
             }
             for _ in range(20):
@@ -884,6 +922,18 @@ class BuilderSmokeTest(unittest.TestCase):
             self.assertIn("5742 PLN", page)
             self.assertIn("Konfiguracja zablokowana", page)
             self.assertIn("900 W | PSU: 750 W", page, "initial analysis renders the current power reserve")
+            dependency_message = self.webdriver(
+                "POST", f"{base}/execute/sync",
+                {"script": "return [...document.querySelectorAll('#issue [data-level=blocker]')].map(item => item.textContent).join(' ')", "args": []},
+            )["value"]
+            for component in ("ryzen-5-7600", "b650", "fortis-5"):
+                with self.subTest(component=component):
+                    self.assertIn(component, dependency_message, "the visible dependency explanation names every involved part")
+            self.assertRegex(
+                dependency_message.lower(),
+                r"socket|chlod|cool|wysok|wysoko|zgod",
+                "the visible dependency explanation includes the conflict reason",
+            )
             rendered_levels = self.webdriver(
                 "POST", f"{base}/execute/sync",
                 {
@@ -996,6 +1046,31 @@ class BuilderSmokeTest(unittest.TestCase):
                 self.fail("compatible RAM change does not clear the RAM compatibility issue")
             self.assertNotIn("DDR4", compatible_summary, "compatible RAM does not leave a RAM conflict")
             self.assertIn("900 W | PSU: 750 W", compatible_summary, "RAM refresh preserves the current power assessment")
+            self.webdriver(
+                "POST", f"{base}/execute/sync",
+                {"script": "const cooling = document.querySelector('#cooling'); cooling.value = 'cooler-2'; cooling.dispatchEvent(new Event('change', {bubbles: true}));", "args": []},
+            )
+            for _ in range(20):
+                bodies = self.webdriver(
+                    "POST", f"{base}/execute/sync", {"script": "return window.__buildBodies", "args": []}
+                )["value"]
+                if bodies and bodies[-1]["selections"]["cooling"] == "cooler-2":
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail("compatible cooling change does not refresh the build")
+            self.assertEqual(bodies[-1]["selections"]["cooling"], "cooler-2")
+            for _ in range(20):
+                cooling_summary = self.webdriver(
+                    "POST", f"{base}/execute/sync", {"script": "return document.querySelector('.summary').textContent", "args": []}
+                )["value"]
+                if "zaleznosc CPU-plyta-chlodzenie" not in cooling_summary:
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail("compatible cooling change does not clear the three-part dependency blocker")
+            self.assertNotIn("fortis-5", cooling_summary, "compatible cooling clears the three-part dependency blocker")
+            self.assertNotIn("zaleznosc CPU-plyta-chlodzenie", cooling_summary)
             self.webdriver(
                 "POST", f"{base}/execute/sync",
                 {"script": "const cpu = document.querySelector('#cpu'); cpu.value = 'cpu-2'; cpu.dispatchEvent(new Event('change', {bubbles: true}));", "args": []},

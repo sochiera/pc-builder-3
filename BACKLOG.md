@@ -34,7 +34,7 @@ Jako kupujacy chce wybrac po jednej czesci wymaganych typow i zobaczyc caly zest
 - Sprawdzenie: wybierz po jednej czesci osmiu typow i sprawdz, ze wszystkie widac w jednym zestawie, a zmiana dowolnej czesci odswieza wynik.
 - Poza zakresem: wiele sztuk jednego typu, akcesoria i automatyczny dobor.
 
-## US-005 — Uzytkownik widzi zaleznosc wielu czesci [nowa]
+## US-005 — Uzytkownik widzi zaleznosc wielu czesci [do weryfikacji]
 
 Jako skladajacy komputer chce zobaczyc wyjasnienie zaleznosci obejmujacej CPU, plyte i chlodzenie, zeby nie oceniac kazdej pary w oderwaniu.
 
