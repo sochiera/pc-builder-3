@@ -381,6 +381,12 @@ def analyse(
                 f"{len(selected_components)} wybranych elementow zestawu.",
             },
         ])
+        if not compatibility_reasons and standard:
+            issues.append({
+                "level": "information",
+                "message": f"Zgodnosc: socket CPU {cpu['socket']} pasuje do plyty {motherboard['socket']}, "
+                f"a plyta i procesor obsluguja RAM {standard}.",
+            })
     if uncertainty_reasons:
         status = "undetermined"
     elif any(issue["level"] == "blocker" for issue in issues):
@@ -595,6 +601,52 @@ def compare_gpus(first_id: str, second_id: str, purpose: str, catalog: list[dict
     }
 
 
+def compare_motherboards(
+    first_id: str, second_id: str, selections: dict, catalog: list[dict]
+) -> dict:
+    """Analyse two motherboard replacements without changing the current build."""
+    if not isinstance(selections, dict):
+        raise ValueError("current build selections are required")
+    by_id = {product.get("id"): product for product in catalog}
+    first = by_id.get(first_id)
+    second = by_id.get(second_id)
+    if first is None or first.get("type") != "motherboard":
+        raise ValueError("unknown first motherboard selection")
+    if second is None or second.get("type") != "motherboard":
+        raise ValueError("unknown second motherboard selection")
+    if first_id == second_id:
+        raise ValueError("two different motherboard selections are required")
+
+    selected = []
+    for component_type in REQUIRED_TYPES:
+        if component_type == "motherboard":
+            continue
+        product = by_id.get(selections.get(component_type))
+        if product is None or product.get("type") != component_type:
+            raise ValueError(f"unknown current {component_type} selection")
+        selected.append(product)
+
+    options = []
+    for motherboard in (first, second):
+        components = selected + [motherboard]
+        cpu = next(product for product in components if product["type"] == "cpu")
+        ram = next(product for product in components if product["type"] == "ram")
+        result = analyse(
+            cpu["model"], motherboard["model"], ram["model"], components
+        )
+        result["total"] = sum(product["price"] for product in components)
+        options.append({
+            "id": motherboard["id"],
+            "model": motherboard["model"],
+            "name": motherboard["name"],
+            "price": motherboard["price"],
+            "total": result["total"],
+            "status": result["status"],
+            "issues": result["issues"],
+        })
+    return {"options": options}
+
+
 def budget_relation(total: int | float, budget: int | float) -> dict:
     difference = budget - total
     return {"limit": budget, "remaining" if difference >= 0 else "overage": abs(difference)}
@@ -701,8 +753,8 @@ PAGE = """<!doctype html>
        <select id='catalog-type'><option value=''>Wszystkie typy</option></select>
        <ul id='catalog-products'></ul>
      </section>
-      <section class='summary'>
-        <h2>Porownaj karty graficzne</h2>
+       <section class='summary'>
+         <h2 id='comparison-heading'>Porownaj komponenty</h2>
         <div id='comparison-controls'></div>
         <div id='comparison' aria-live='polite'></div>
       </section>
@@ -714,7 +766,11 @@ PAGE = """<!doctype html>
        ['cooling', 'Chlodzenie'], ['case', 'Obudowa'],
      ];
      const requiredTypes = componentDefinitions.map(([type]) => type);
-     const typeNames = Object.fromEntries(componentDefinitions);
+       const typeNames = Object.fromEntries(componentDefinitions);
+      const comparisonTypeNames = {
+        motherboard: { plural: 'plyty glowne', first: 'Pierwsza plyta glowna', second: 'Druga plyta glowna' },
+        gpu: { plural: 'karty graficzne', first: 'Pierwsza karta graficzna', second: 'Druga karta graficzna' },
+      };
      const issueLabels = { blocker: 'Blokada', warning: 'Ostrzezenie', information: 'Informacja' };
      let catalog = [];
       let buildCatalog = [];
@@ -855,7 +911,8 @@ PAGE = """<!doctype html>
          products.append(item);
        });
        if (build.products.length === requiredTypes.length) renderVariantAction();
-     }
+       await renderComparison();
+      }
       function renderVariantAction() {
         if (document.querySelector('#create-variant')) return;
         const button = document.createElement('button');
@@ -1061,10 +1118,13 @@ PAGE = """<!doctype html>
          const requestGeneration = ++comparisonRequestGeneration;
          const comparison = document.querySelector('#comparison');
         const controls = document.querySelector('#comparison-controls');
-        const gpus = catalog.filter(product => product.type === 'gpu');
-        if (!gpus.length) {
-          controls.replaceChildren();
-          comparison.textContent = 'Brak kart graficznych do porownania.';
+           const candidateTypes = ['motherboard', 'gpu'];
+           const candidates = candidateTypes.flatMap(type =>
+             buildCatalog.filter(product => product.type === type)
+           );
+         if (!candidates.length) {
+           controls.replaceChildren();
+           comparison.textContent = 'Brak elementow do porownania.';
           return;
         }
         let firstSelect = document.querySelector('#compare-first');
@@ -1073,12 +1133,14 @@ PAGE = """<!doctype html>
         const previousSecond = secondSelect?.value;
         if (!firstSelect || !secondSelect) {
           const firstLabel = document.createElement('label');
-          firstLabel.textContent = 'Pierwsza karta';
+           firstLabel.id = 'compare-first-label';
+           firstLabel.textContent = 'Pierwszy komponent';
           firstSelect = document.createElement('select');
           firstSelect.id = 'compare-first';
           firstLabel.append(firstSelect);
           const secondLabel = document.createElement('label');
-          secondLabel.textContent = 'Druga karta';
+           secondLabel.id = 'compare-second-label';
+           secondLabel.textContent = 'Drugi komponent';
           secondSelect = document.createElement('select');
           secondSelect.id = 'compare-second';
           secondLabel.append(secondSelect);
@@ -1088,23 +1150,40 @@ PAGE = """<!doctype html>
         }
         firstSelect.replaceChildren();
         secondSelect.replaceChildren();
-        const fillOptions = (select, valueFor) => gpus.forEach(product => {
+          const fillOptions = (select, valueFor) => candidates.forEach(product => {
           const label = `${product.name} - ${product.price} PLN`;
           select.append(new Option(label, valueFor(product)));
         });
          fillOptions(firstSelect, product => product.id);
          fillOptions(secondSelect, product => product.id);
-         firstSelect.value = gpus.some(product => product.id === previousFirst)
-           ? previousFirst : gpus[0].id;
-        secondSelect.value = gpus.some(product => product.id === previousSecond)
-          ? previousSecond : (gpus[1] || gpus[0]).id;
-         const first = gpus.find(product => product.id === firstSelect.value);
-         const second = gpus.find(product => product.id === secondSelect.value);
-         const purpose = document.querySelector('#purpose').value;
-         const response = await fetch('/api/compare', {
+         firstSelect.value = candidates.some(product => product.id === previousFirst)
+           ? previousFirst : candidates[0].id;
+         secondSelect.value = candidates.some(product => product.id === previousSecond)
+           ? previousSecond : (candidates[1] || candidates[0]).id;
+           const first = candidates.find(product => product.id === firstSelect.value);
+           const second = candidates.find(product => product.id === secondSelect.value);
+           const comparisonType = first?.type === second?.type ? first.type : null;
+           if (!comparisonType) {
+             document.querySelector('#comparison-heading').textContent = 'Porownaj komponenty';
+             comparison.textContent = 'Wybierz dwa elementy tego samego typu.';
+             return;
+           }
+           const comparisonNames = comparisonTypeNames[comparisonType];
+           document.querySelector('#comparison-heading').textContent = `Porownaj ${comparisonNames.plural}`;
+           document.querySelector('#compare-first-label').firstChild.textContent = comparisonNames.first;
+           document.querySelector('#compare-second-label').firstChild.textContent = comparisonNames.second;
+          const purpose = document.querySelector('#purpose').value;
+          const selections = Object.fromEntries(
+            requiredTypes.filter(type => type !== comparisonType).map(type => [
+              type, document.querySelector(`#${type}`)?.value
+            ])
+          );
+          const response = await fetch('/api/compare', {
            method: 'POST',
            headers: { 'Content-Type': 'application/json' },
-           body: JSON.stringify({ first_gpu: first.id, second_gpu: second.id, purpose })
+             body: JSON.stringify(comparisonType === 'motherboard'
+              ? { first_motherboard: first.id, second_motherboard: second.id, selections }
+              : { first_gpu: first.id, second_gpu: second.id, purpose })
          });
          const result = await response.json();
          if (requestGeneration !== comparisonRequestGeneration) return;
@@ -1113,11 +1192,21 @@ PAGE = """<!doctype html>
            return;
          }
          comparison.replaceChildren();
-         result.components.forEach(product => {
-           const card = document.createElement('section');
-           card.textContent = `${product.name} - ${product.price} PLN | ${product.key_parameter || 'Parametr kluczowy niedostepny'} | Przydatnosc dla ${result.purpose_label}: ${product.usefulness}/100`;
-           comparison.append(card);
-         });
+          (result.components || result.options).forEach(product => {
+            const card = document.createElement('section');
+            card.textContent = result.components
+              ? `${product.name} - ${product.price} PLN | ${product.key_parameter || 'Parametr kluczowy niedostepny'} | Przydatnosc dla ${result.purpose_label}: ${product.usefulness}/100`
+              : `${product.name} - ${product.price} PLN | Suma zestawu: ${product.total} PLN | ${product.status}`;
+            if (result.options) {
+              product.issues.forEach(issue => {
+                const reason = document.createElement('p');
+                reason.textContent = issue.message;
+                card.append(reason);
+              });
+            }
+            comparison.append(card);
+          });
+          if (result.options) return;
          const difference = document.createElement('p');
          difference.textContent = result.parameter_difference;
          comparison.append(difference);
@@ -1387,12 +1476,20 @@ class Handler(BaseHTTPRequestHandler):
                 self.respond(HTTPStatus.OK, "application/json", json.dumps({"product": result}).encode())
                 return
             if request.path == "/api/compare":
-                result = compare_gpus(
-                    payload.get("first_gpu"),
-                    payload.get("second_gpu"),
-                    payload.get("purpose", "gaming"),
-                    BUILD_CATALOG,
-                )
+                if payload.get("first_motherboard") or payload.get("second_motherboard"):
+                    result = compare_motherboards(
+                        payload.get("first_motherboard"),
+                        payload.get("second_motherboard"),
+                        payload.get("selections"),
+                        BUILD_CATALOG,
+                    )
+                else:
+                    result = compare_gpus(
+                        payload.get("first_gpu"),
+                        payload.get("second_gpu"),
+                        payload.get("purpose", "gaming"),
+                        BUILD_CATALOG,
+                    )
                 self.respond(HTTPStatus.OK, "application/json", json.dumps(result).encode())
                 return
             report = import_products(payload)

@@ -793,6 +793,16 @@ class BuilderSmokeTest(unittest.TestCase):
                     break
                 time.sleep(0.1)
             comparison_controls = state
+            has_both_gpu_selectors = (
+                comparison_controls["firstTag"] == "SELECT"
+                and comparison_controls["secondTag"] == "SELECT"
+                and any("GeForce RTX 4070" in option for option in comparison_controls["firstOptions"])
+                and any("GeForce RTX 4080" in option for option in comparison_controls["secondOptions"])
+            )
+            with self.subTest("buyer can choose both prepared GPUs"):
+                self.assertTrue(has_both_gpu_selectors, "comparison exposes both prepared GPU selectors")
+            if not has_both_gpu_selectors:
+                return
             self.webdriver(
                 "POST",
                 f"{base}/execute/sync",
@@ -819,10 +829,7 @@ class BuilderSmokeTest(unittest.TestCase):
                     break
                 time.sleep(0.1)
             with self.subTest("buyer can choose both prepared GPUs"):
-                self.assertEqual(comparison_controls["firstTag"], "SELECT", "comparison exposes a first GPU selector")
-                self.assertEqual(comparison_controls["secondTag"], "SELECT", "comparison exposes a second GPU selector")
-                self.assertTrue(any("GeForce RTX 4070" in option for option in comparison_controls["firstOptions"]))
-                self.assertTrue(any("GeForce RTX 4080" in option for option in comparison_controls["secondOptions"]))
+                self.assertTrue(has_both_gpu_selectors, "comparison exposes both prepared GPU selectors")
             with self.subTest("comparison shows names prices and key parameter"):
                 self.assertIn("GeForce RTX 4070", comparison)
                 self.assertIn("2399 PLN", comparison)
@@ -904,6 +911,123 @@ class BuilderSmokeTest(unittest.TestCase):
                         any(gpu_name in explanation and "Programowanie" in explanation for explanation in programming_details["explanations"]),
                         f"comparison updates the usefulness explanation for {gpu_name}",
                     )
+        finally:
+            if "session_id" in locals():
+                try:
+                    self.webdriver("DELETE", f"/session/{session_id}")
+                except OSError:
+                    pass
+            driver_process.terminate()
+            driver_process.wait(timeout=3)
+            app_process.terminate()
+            app_process.wait(timeout=3)
+
+    def test_buyer_can_compare_two_prepared_motherboards_in_current_build(self):
+        with socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            app_port = listener.getsockname()[1]
+        with socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            self.webdriver_port = listener.getsockname()[1]
+        app_process = subprocess.Popen([sys.executable, "app.py", "--port", str(app_port)], cwd=ROOT)
+        driver_process = subprocess.Popen(
+            ["geckodriver", "--port", str(self.webdriver_port)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            for _ in range(20):
+                try:
+                    with urlopen(f"http://127.0.0.1:{self.webdriver_port}/status", timeout=0.2):
+                        break
+                except OSError:
+                    time.sleep(0.1)
+            else:
+                self.skipTest("geckodriver is unavailable")
+            session = self.webdriver("POST", "/session", {"capabilities": {"alwaysMatch": {"browserName": "firefox"}}})
+            session_id = session["value"]["sessionId"]
+            base = f"/session/{session_id}"
+            self.webdriver("POST", f"{base}/url", {"url": f"http://127.0.0.1:{app_port}/"})
+            self.webdriver(
+                "POST",
+                f"{base}/execute/sync",
+                {"script": "document.querySelector('#import').click()", "args": []},
+            )
+            for _ in range(20):
+                state = self.webdriver(
+                    "POST",
+                    f"{base}/execute/sync",
+                    {
+                        "script": """
+                            const first = document.querySelector('#compare-first');
+                            const second = document.querySelector('#compare-second');
+                            return {
+                              firstOptions: first ? [...first.options].map(option => option.textContent) : [],
+                              secondOptions: second ? [...second.options].map(option => option.textContent) : [],
+                              comparison: document.querySelector('#comparison')?.textContent || ''
+                            };
+                        """,
+                        "args": [],
+                    },
+                )["value"]
+                if (
+                    any("MSI B650" in option for option in state["firstOptions"])
+                    and any("ASUS Prime Z790" in option for option in state["secondOptions"])
+                ):
+                    break
+                time.sleep(0.1)
+            with self.subTest("prepared current build exposes both motherboard comparison options"):
+                has_b650 = any("MSI B650" in option for option in state["firstOptions"])
+                has_z790 = any("ASUS Prime Z790" in option for option in state["secondOptions"])
+                self.assertTrue(has_b650 and has_z790, "comparison selectors expose both prepared motherboards")
+            if not (has_b650 and has_z790):
+                return
+            self.webdriver(
+                "POST",
+                f"{base}/execute/sync",
+                {
+                    "script": """
+                        const first = document.querySelector('#compare-first');
+                        const second = document.querySelector('#compare-second');
+                        first.value = [...first.options].find(option => option.textContent.includes('MSI B650')).value;
+                        first.dispatchEvent(new Event('change', {bubbles: true}));
+                        second.value = [...second.options].find(option => option.textContent.includes('ASUS Prime Z790')).value;
+                        second.dispatchEvent(new Event('change', {bubbles: true}));
+                    """,
+                    "args": [],
+                },
+            )
+            for _ in range(20):
+                comparison = self.webdriver(
+                    "POST",
+                    f"{base}/execute/sync",
+                    {
+                        "script": """
+                            const root = document.querySelector('#comparison');
+                            return {
+                              text: root?.textContent || '',
+                              cards: root ? [...root.children].map(card => card.textContent) : []
+                            };
+                        """,
+                        "args": [],
+                    },
+                )["value"]
+                if "MSI B650" in comparison["text"] and "ASUS Prime Z790" in comparison["text"]:
+                    break
+                time.sleep(0.1)
+            with self.subTest("comparison shows totals and explanations for both boards"):
+                self.assertIn("MSI B650", comparison["text"])
+                self.assertIn("5772 PLN", comparison["text"])
+                self.assertIn("ASUS Prime Z790", comparison["text"])
+                self.assertIn("5922 PLN", comparison["text"])
+                self.assertEqual(len(comparison["cards"]), 2)
+                b650_card = next(card for card in comparison["cards"] if "MSI B650" in card)
+                z790_card = next(card for card in comparison["cards"] if "ASUS Prime Z790" in card)
+                self.assertRegex(b650_card, r"compatible|Kompatybilny")
+                self.assertRegex(b650_card, r"socket|CPU|procesor")
+                self.assertRegex(b650_card, r"RAM|ram|DDR5")
+                self.assertRegex(z790_card, r"blocked|Blokada")
+                self.assertRegex(z790_card, r"socket|CPU|procesor")
         finally:
             if "session_id" in locals():
                 try:
@@ -1530,6 +1654,119 @@ class BuilderSmokeTest(unittest.TestCase):
                 {"b650", "z790"},
             )
             self.assertEqual(len(catalog["options"]), 12, "builder options reflect imported variants")
+        finally:
+            process.terminate()
+            process.wait(timeout=3)
+
+    def test_compare_two_motherboards_against_current_build(self):
+        payload = {
+            "products": [
+                {"id": "cpu-1", "model": "ryzen-5-7600", "name": "AMD Ryzen 5 7600", "price": 829},
+                {"id": "board-1", "model": "b650", "name": "MSI B650 Gaming Plus WiFi", "price": 699},
+                {"id": "board-2", "model": "z790", "name": "ASUS Prime Z790-P", "price": 849},
+                {"id": "ram-1", "model": "ddr5-6000", "name": "Kingston Fury DDR5 32 GB", "price": 499},
+                {"id": "gpu-1", "model": "rtx-4070", "name": "GeForce RTX 4070", "price": 2399},
+                {"id": "disk-1", "model": "nvme-1tb", "name": "Samsung 990 EVO 1 TB", "price": 399},
+                {"id": "psu-1", "model": "psu-900", "name": "be quiet! Pure Power 12 M 900W", "price": 449},
+                {"id": "cooler-1", "model": "compatible-cooling", "name": "Kompatybilne chlodzenie", "price": 199},
+                {"id": "case-1", "model": "regnum-400", "name": "Endorfy Regnum 400 ARGB", "price": 299},
+            ]
+        }
+        with socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            port = listener.getsockname()[1]
+        base_url = f"http://127.0.0.1:{port}"
+        process = subprocess.Popen([sys.executable, "app.py", "--port", str(port)], cwd=ROOT)
+        try:
+            for _ in range(20):
+                try:
+                    with urlopen(base_url, timeout=0.2):
+                        break
+                except OSError:
+                    time.sleep(0.1)
+            else:
+                self.fail("Application did not start")
+
+            import_request = Request(
+                f"{base_url}/api/import",
+                data=json.dumps(payload).encode(),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urlopen(import_request) as response:
+                self.assertEqual(response.status, 200, "complete prepared set can be imported")
+            with urlopen(f"{base_url}/api/catalog") as response:
+                catalog = json.load(response)
+            motherboard_ids = {
+                product["model"]: product["id"]
+                for product in catalog["products"]
+                if product["type"] == "motherboard"
+            }
+            with self.subTest("current build offers both motherboard replacements"):
+                self.assertEqual(set(motherboard_ids), {"b650", "z790"})
+
+            selections = {
+                product["type"]: product["id"]
+                for product in catalog["products"]
+                if product["type"] != "motherboard"
+            }
+            comparison_request = Request(
+                f"{base_url}/api/compare",
+                data=json.dumps(
+                    {
+                        "selections": selections,
+                        "first_motherboard": motherboard_ids["b650"],
+                        "second_motherboard": motherboard_ids["z790"],
+                    }
+                ).encode(),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            try:
+                with urlopen(comparison_request) as response:
+                    comparison_status = response.status
+                    comparison = json.load(response)
+            except HTTPError as error:
+                comparison_status = error.code
+                comparison = json.load(error)
+            self.assertEqual(comparison_status, 200, "public comparison accepts two current-set motherboards")
+            self.assertIn("options", comparison, "comparison returns one result per motherboard option")
+            options = {option["model"]: option for option in comparison["options"]}
+            self.assertEqual(set(options), {"b650", "z790"}, "comparison returns both selected motherboards")
+            with self.subTest("comparison includes each option total and explanation"):
+                self.assertEqual(options["b650"]["total"], 5772)
+                self.assertEqual(options["z790"]["total"], 5922)
+                self.assertTrue(options["b650"]["issues"], "compatible motherboard includes an explanation")
+                self.assertTrue(options["z790"]["issues"], "blocked motherboard includes an explanation")
+                for option in options.values():
+                    self.assertTrue(
+                        all(issue.get("message") for issue in option["issues"]),
+                        "each motherboard result exposes explanation messages",
+                    )
+                b650_reasons = " ".join(issue["message"] for issue in options["b650"]["issues"])
+                self.assertRegex(b650_reasons, r"socket|CPU|procesor", "compatible motherboard explains CPU socket compatibility")
+                self.assertRegex(b650_reasons, r"RAM|ram|DDR5", "compatible motherboard explains RAM compatibility")
+            with self.subTest("comparison distinguishes compatible and blocked motherboard"):
+                self.assertEqual(options["b650"]["status"], "compatible")
+                self.assertEqual(options["z790"]["status"], "blocked")
+                self.assertTrue(options["z790"]["issues"], "blocked motherboard includes an explanation")
+                self.assertRegex(
+                    " ".join(issue["message"] for issue in options["z790"]["issues"]),
+                    r"socket|CPU|procesor",
+                )
+            unchanged_build_request = Request(
+                f"{base_url}/api/build",
+                data=json.dumps({"selections": {**selections, "motherboard": motherboard_ids["b650"]}}).encode(),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urlopen(unchanged_build_request) as response:
+                unchanged_build = json.load(response)
+            self.assertEqual(
+                set(unchanged_build["products"]),
+                set({**selections, "motherboard": motherboard_ids["b650"]}.values()),
+                "comparison does not replace the base motherboard selection",
+            )
         finally:
             process.terminate()
             process.wait(timeout=3)

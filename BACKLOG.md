@@ -169,7 +169,7 @@ Jako kupujacy chce zestawic dwa komponenty tego samego typu obok siebie, zeby zo
 - Sprawdzenie: wybierz dwa przygotowane GPU i sprawdz, ze widac obok siebie ich nazwy, ceny i jeden kluczowy parametr z zaznaczonymi roznicami.
 - Poza zakresem: trzeci produkt, dowolne parametry i porownanie zestawow.
 
-## US-024 — Uzytkownik porownuje zamienniki w zestawie [nowa]
+## US-024 — Uzytkownik porownuje zamienniki w zestawie [do weryfikacji]
 
 Jako kupujacy chce porownac dwa zamienniki dla jednego miejsca w aktualnym zestawie, zeby przed zmiana zobaczyc wplyw kazdego na zgodnosc i laczna cene konfiguracji.
 
