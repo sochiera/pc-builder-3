@@ -142,7 +142,7 @@ Jako kupujacy chce wyszukac model i ograniczyc katalog do jednego typu czesci, z
 - Sprawdzenie: wpisz fragment nazwy przygotowanego GPU, wlacz filtr GPU i sprawdz, ze lista zawiera pasujacy model oraz nie pokazuje pozostalych typow.
 - Poza zakresem: drugi filtr, podpowiedzi, tolerowanie literowek i sortowanie.
 
-## US-016 — Uzytkownik odswieza ceny produktu [do weryfikacji]
+## US-016 — Uzytkownik odswieza ceny produktu [zrobiona]
 
 Jako kupujacy chce uruchomic wyszukanie aktualnych ofert dla wybranego produktu i zobaczyc czas sprawdzenia, zeby decyzja nie opierala sie na starej cenie.
 
