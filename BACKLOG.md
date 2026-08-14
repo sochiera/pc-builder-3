@@ -43,6 +43,15 @@ Jako skladajacy komputer chce zobaczyc wyjasnienie zaleznosci obejmujacej CPU, p
 - Sprawdzenie: wybierz przygotowane CPU, plyte i chlodzenie, ktore dopiero razem tworza konflikt, i sprawdz, ze wynik wskazuje wszystkie trzy czesci oraz powod.
 - Poza zakresem: drugi rodzaj zaleznosci wieloczynnikowej i automatyczna zamiana czesci.
 
+## US-017 — Uzytkownik wybiera oferte innego sklepu [nowa]
+
+Jako kupujacy chce przy rozpoznanym produkcie porownac oferte x-kom z oferta jednego innego sklepu i przejsc do wybranej, zeby kupic produkt w korzystniejszym miejscu.
+
+- Dlaczego teraz: PROJECT.md przewiduje oferty innych sklepow dla rozpoznanych produktow, a mapa pokrycia wskazuje te sekcje jako nastepna do otwarcia.
+- Sekcja briefu: Inne sklepy
+- Sprawdzenie: otworz przygotowany rozpoznany produkt z oferta x-kom i drugiego sklepu, porownaj widoczne ceny, a nastepnie otworz kazdy link i sprawdz, ze prowadzi do wlasciwej oferty.
+- Poza zakresem: kolejny sklep, koszt dostawy, automatyczne wyszukiwanie ofert i optymalizacja koszyka.
+
 ## US-006 — Uzytkownik sprawdza kompatybilnosc zestawu [nowa]
 
 Jako kupujacy chce po kazdej zmianie zobaczyc, czy caly zestaw jest zgodny oraz dlaczego, zeby nie kupic czesci, ktorych nie da sie polaczyc.
@@ -141,15 +150,6 @@ Jako kupujacy chce uruchomic wyszukanie aktualnych ofert dla wybranego produktu 
 - Sekcja briefu: Wyszukiwanie cen
 - Sprawdzenie: uruchom wyszukanie dla przygotowanego produktu i sprawdz, ze widac odnaleziona cene oraz czas ostatniego sprawdzenia.
 - Poza zakresem: automatyczny harmonogram, powiadomienia i historia zmian.
-
-## US-017 — Uzytkownik widzi oferte innego sklepu [nowa]
-
-Jako kupujacy chce przy rozpoznanym produkcie zobaczyc cene i link do oferty jednego sklepu poza x-kom, zeby moc wybrac tansze miejsce zakupu.
-
-- Dlaczego teraz: PROJECT.md przewiduje oferty innych sklepow dopiero dla rozpoznanych produktow.
-- Sekcja briefu: Inne sklepy
-- Sprawdzenie: otworz przygotowany produkt majacy oferte x-kom i drugiego sklepu i sprawdz, ze obie ceny oraz linki prowadza do wlasciwych ofert.
-- Poza zakresem: kolejny sklep, koszt dostawy i optymalizacja koszyka.
 
 ## US-018 — Uzytkownik porownuje dwa komponenty [nowa]
 
