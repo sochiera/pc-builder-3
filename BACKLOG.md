@@ -79,7 +79,7 @@ Jako skladajacy komputer chce zobaczyc, czy wybrana pamiec RAM pasuje do plyty i
 - Sprawdzenie: wybierz przygotowany modul o nieobslugiwanym standardzie i sprawdz, ze analiza wskazuje konflikt RAM z plyta oraz uzasadnienie.
 - Poza zakresem: taktowania, profile podkrecania, opoznienia i konfiguracje wielu modulow.
 
-## US-010 — Uzytkownik sprawdza zapas zasilania [w toku]
+## US-010 — Uzytkownik sprawdza zapas zasilania [do weryfikacji]
 
 Jako skladajacy komputer chce zobaczyc, czy moc PSU wystarcza dla wybranego zestawu, zeby nie kupic zbyt slabego zasilacza.
 
