@@ -38,4 +38,4 @@ Zakres podstawowego briefu jest domkniety. Nie otwieramy kolejnych wariantow ist
 
 ## Swiadomie odlozone
 
-Konta, synchronizacja miedzy urzadzeniami, optymalizacja koszyka wielu sklepow, alerty cenowe i prognozowanie nie naleza do zakonczonego zakresu. Kryterium ukonczenia, podsumowanie briefu i opis testowania sa kontekstem procesu, a nie osobnymi zdolnosciami uzytkownika.
+Konta, synchronizacja miedzy urzadzeniami, optymalizacja koszyka wielu sklepow, alerty cenowe i prognozowanie nie naleza do zakonczonego zakresu. Kryterium ukonczenia i opis testowania sa kontekstem procesu, a nie zdolnosciami uzytkownika. Podsumowanie jest widocznym wynikiem produktu, lecz nie wymaga osobnej historyjki: potwierdzona US-013 pokazuje wyjasniona ocene zestawu, a US-021 potwierdza podsumowanie ceny takze po otwarciu udostepnionej konfiguracji.
