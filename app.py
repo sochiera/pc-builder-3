@@ -1233,6 +1233,9 @@ PAGE = """<!doctype html>
           item.append(history);
         }
       }
+      function findOffer(product, source) {
+        return (product.offers || []).find(offer => offer.source === source);
+      }
       function renderCatalog(products) {
         const list = document.querySelector('#catalog-products');
         list.replaceChildren();
@@ -1242,10 +1245,10 @@ PAGE = """<!doctype html>
           const refresh = document.createElement('button');
           refresh.type = 'button';
            refresh.textContent = 'Odswiez ceny';
-            const selectedOffer = (product.offers || []).find(offer => offer.source === 'x-kom') || product.offers?.[0];
-            refresh.addEventListener('click', () => refreshProduct(product.model, selectedOffer?.id));
-           item.append(document.createTextNode(' '), refresh);
-           if (!(product.offers || []).some(offer => offer.source === 'prepared-shop')) {
+             const selectedOffer = findOffer(product, 'x-kom') || product.offers?.[0];
+             refresh.addEventListener('click', () => refreshProduct(product.model, selectedOffer?.id));
+            item.append(document.createTextNode(' '), refresh);
+            if (!findOffer(product, 'prepared-shop')) {
              const search = document.createElement('button');
              search.type = 'button';
              search.textContent = 'Szukaj oferty';

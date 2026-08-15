@@ -625,6 +625,58 @@ class BuilderSmokeTest(unittest.TestCase):
                 self.fail(f"second-store offer did not render: {result!r}")
             self.assertIn("829 PLN", result["text"], "successful search renders the matched second-store price")
             self.assertIn("https://prepared-shop.example/oferta/offer-2", result["links"], "successful search renders the matched offer link")
+            search_request = self.webdriver(
+                "POST", f"{base}/execute/sync", {"script": "return window.__searchBodies[0]", "args": []}
+            )["value"]
+            with self.subTest("comparison keeps both named offers and prices"):
+                self.assertIn("AMD Ryzen 5 7600 BOX", result["text"], "comparison keeps the x-kom offer name")
+                self.assertIn("799 PLN", result["text"], "comparison keeps the x-kom offer price")
+                self.assertIn("AMD 7600 3.8 GHz", result["text"], "comparison shows the found offer name")
+                self.assertEqual(
+                    set(result["links"]),
+                    {
+                        "https://x-kom.pl/p/offer-1",
+                        "https://prepared-shop.example/oferta/offer-2",
+                    },
+                    "comparison assigns each offer its own purchase address",
+                )
+                for offer_url, navigation_url in (
+                    ("https://x-kom.pl/p/offer-1", "https://www.x-kom.pl/p/offer-1"),
+                    (
+                        "https://prepared-shop.example/oferta/offer-2",
+                        "https://prepared-shop.example/oferta/offer-2",
+                    ),
+                ):
+                    link = self.webdriver(
+                        "POST",
+                        f"{base}/element",
+                        {"using": "css selector", "value": f'a[href="{offer_url}"]'},
+                    )
+                    try:
+                        self.webdriver(
+                            "POST",
+                            f"{base}/element/{link['value']['element-6066-11e4-a52e-4f735466cecf']}/click",
+                            {},
+                        )
+                    except HTTPError:
+                        pass
+                    self.assertEqual(
+                        self.webdriver("GET", f"{base}/url")["value"],
+                        navigation_url,
+                        "clicking each searched offer opens its assigned destination",
+                    )
+                    self.webdriver("POST", f"{base}/url", {"url": f"http://127.0.0.1:{app_port}/"})
+                    for _ in range(20):
+                        catalog_after_navigation = self.webdriver(
+                            "POST",
+                            f"{base}/execute/sync",
+                            {"script": "return document.querySelector('#catalog-products')?.textContent || ''", "args": []},
+                        )["value"]
+                        if "ryzen-5-7600" in catalog_after_navigation:
+                            break
+                        time.sleep(0.1)
+                    else:
+                        self.fail("catalog did not render after returning from searched offer")
             self.assertEqual(
                 self.webdriver(
                     "POST", f"{base}/execute/sync", {"script": "return document.querySelectorAll('#catalog-products li').length", "args": []}
@@ -632,9 +684,6 @@ class BuilderSmokeTest(unittest.TestCase):
                 9,
                 "search enriches the existing product instead of creating a duplicate",
             )
-            search_request = self.webdriver(
-                "POST", f"{base}/execute/sync", {"script": "return window.__searchBodies[0]", "args": []}
-            )["value"]
             self.assertEqual(search_request, {"product_id": "ryzen-5-7600"}, "search targets the recognized product")
             self.assertIn("x-kom", result["text"], "search preserves the existing x-kom offer")
         finally:

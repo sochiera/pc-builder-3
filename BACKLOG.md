@@ -1,4 +1,4 @@
-## US-027 — Uzytkownik wybiera znaleziona oferte sklepu [nowa]
+## US-027 — Uzytkownik wybiera znaleziona oferte sklepu [do weryfikacji]
 
 Jako kupujacy chce po wyszukaniu oferty drugiego sklepu porownac ja z oferta x-kom i otworzyc wybrana strone zakupu, zeby skorzystac z korzystniejszej oferty.
 
