@@ -2,7 +2,7 @@
 """Minimal vertical slice for the PC builder."""
 
 import argparse
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import itertools
 import json
 import math
@@ -494,6 +494,8 @@ def catalog_products(products: list[dict]) -> list[dict]:
             continue
         type_indexes[component_type] = type_indexes.get(component_type, 0) + 1
         latest_offer = priced_offers[-1]
+        for offer in priced_offers:
+            offer.setdefault("price_history", [price_measurement(offer["price"], imported_at)])
         catalog_product = {
             "id": f"{component_type}-{type_indexes[component_type]}",
             "type": component_type,
@@ -519,26 +521,48 @@ def price_direction(current: int | float, previous: int | float) -> str:
     return "unchanged"
 
 
-def refresh_product(product_id: str) -> dict:
+def price_measurement(price: int | float, checked_at: str) -> dict:
+    return {"price": price, "checked_at": checked_at}
+
+
+def refresh_product(product_id: str, offer_id: str | None = None) -> dict:
     """Refresh one imported product while preserving its recognized identity."""
     product = next((item for item in IMPORTED_CATALOG if item["model"] == product_id), None)
     if product is None:
         raise ValueError("unknown product")
     if product_id not in REFRESHED_PRICES:
         raise ValueError("unsupported product")
-    checked_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    target_offer = next(
+        (offer for offer in product["offers"]
+         if offer_id and offer.get("id") == offer_id),
+        None,
+    ) if offer_id else next(
+        (offer for offer in product["offers"] if offer.get("source") == "x-kom"),
+        product["offers"][0],
+    )
+    if target_offer is None:
+        raise ValueError("unknown offer")
+    checked_at_value = datetime.now(timezone.utc).replace(microsecond=0)
     refreshed_price = REFRESHED_PRICES[product_id]
-    previous_price = product.get("last_price", product["price"])
-    previous_checked = product.get("last_checked", checked_at)
-    product["previous_price"] = previous_price
-    product["previous_checked"] = previous_checked
-    product["price_direction"] = price_direction(refreshed_price, previous_price)
-    for offer in product["offers"]:
-        offer["price"] = refreshed_price
-        offer["checked_at"] = checked_at
-    product["price"] = refreshed_price
-    product["last_price"] = refreshed_price
-    product["last_checked"] = checked_at
+    history = target_offer.setdefault("price_history", [])
+    if not history:
+        history.append(price_measurement(target_offer["price"], checked_at_value.isoformat()))
+    last_checked = datetime.fromisoformat(history[0]["checked_at"])
+    if checked_at_value <= last_checked:
+        checked_at_value = last_checked + timedelta(seconds=1)
+    checked_at = checked_at_value.isoformat()
+    history.append(price_measurement(refreshed_price, checked_at))
+    history.sort(key=lambda measurement: measurement["checked_at"], reverse=True)
+    latest_measurement = history[0]
+    previous_measurement = history[1] if len(history) > 1 else None
+    target_offer["price"] = refreshed_price
+    target_offer["checked_at"] = checked_at
+    product["previous_price"] = previous_measurement["price"]
+    product["previous_checked"] = previous_measurement["checked_at"]
+    product["price_direction"] = price_direction(latest_measurement["price"], previous_measurement["price"])
+    product["price"] = latest_measurement["price"]
+    product["last_price"] = latest_measurement["price"]
+    product["last_checked"] = latest_measurement["checked_at"]
     return product
 
 
@@ -555,7 +579,11 @@ def search_product_offer(product_id: str) -> dict:
         None,
     )
     if existing is None:
-        product["offers"].append(dict(offer))
+        offer = dict(offer)
+        offer["price_history"] = [price_measurement(
+            offer["price"], datetime.now(timezone.utc).isoformat(timespec="seconds")
+        )]
+        product["offers"].append(offer)
     else:
         offer = existing
     product["price"] = product["offers"][-1]["price"]
@@ -1196,6 +1224,14 @@ PAGE = """<!doctype html>
         } else {
           item.append(details, document.createTextNode(offer.source));
         }
+        if (offer.price_history?.length) {
+          const history = document.createElement('span');
+          history.textContent = ` Historia ceny (${offer.source}): ` +
+            offer.price_history.map(measurement =>
+              `${measurement.price} PLN (${measurement.checked_at})`
+            ).join(' | ');
+          item.append(history);
+        }
       }
       function renderCatalog(products) {
         const list = document.querySelector('#catalog-products');
@@ -1206,7 +1242,8 @@ PAGE = """<!doctype html>
           const refresh = document.createElement('button');
           refresh.type = 'button';
            refresh.textContent = 'Odswiez ceny';
-           refresh.addEventListener('click', () => refreshProduct(product.model));
+            const selectedOffer = (product.offers || []).find(offer => offer.source === 'x-kom') || product.offers?.[0];
+            refresh.addEventListener('click', () => refreshProduct(product.model, selectedOffer?.id));
            item.append(document.createTextNode(' '), refresh);
            if (!(product.offers || []).some(offer => offer.source === 'prepared-shop')) {
              const search = document.createElement('button');
@@ -1336,11 +1373,11 @@ PAGE = """<!doctype html>
          priceExplanation.textContent = result.price_explanation;
         comparison.append(priceExplanation);
       }
-       async function refreshProduct(productId) {
+        async function refreshProduct(productId, offerId = null) {
         const response = await fetch('/api/refresh', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ product_id: productId })
+           body: JSON.stringify({ product_id: productId, ...(offerId ? { offer_id: offerId } : {}) })
         });
          const report = await response.json();
          if (!response.ok) return;
@@ -1373,7 +1410,7 @@ PAGE = """<!doctype html>
          const response = await fetch('/api/search-offer', {
            method: 'POST',
            headers: { 'Content-Type': 'application/json' },
-           body: JSON.stringify({ product_id: productId })
+            body: JSON.stringify({ product_id: productId })
          });
          const report = await response.json();
          if (!response.ok) return;
@@ -1605,7 +1642,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.respond(HTTPStatus.OK, "application/json", json.dumps(result).encode())
                 return
             if request.path == "/api/refresh":
-                result = refresh_product(payload.get("product_id"))
+                result = refresh_product(payload.get("product_id"), payload.get("offer_id"))
                 sync_build_catalog_product(result)
                 self.respond(HTTPStatus.OK, "application/json", json.dumps({"product": result}).encode())
                 return

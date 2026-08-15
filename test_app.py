@@ -737,12 +737,17 @@ class BuilderSmokeTest(unittest.TestCase):
                 f"{base}/execute/sync",
                 {"script": "return window.__refreshBodies[0]", "args": []},
             )["value"]
-            self.assertEqual(refresh_request, {"product_id": "ryzen-5-7600"}, "refresh targets the selected recognized product")
+            self.assertEqual(
+                refresh_request,
+                {"product_id": "ryzen-5-7600", "offer_id": "offer-1"},
+                "refresh targets the selected recognized product offer",
+            )
             self.assertIn("ryzen-5-7600", refreshed, "refreshed offer remains attached to the recognized product")
             self.assertIn("x-kom", refreshed, "refreshed offer remains visible with its source")
             self.assertIn("prepared-shop", refreshed, "second refreshed offer remains visible with its source")
             self.assertIn("749 PLN", refreshed, "successful refresh renders the current offer price")
-            self.assertGreaterEqual(refreshed.count("749 PLN"), 3, "product and both refreshed offers show the current price")
+            self.assertGreaterEqual(refreshed.count("749 PLN"), 2, "product and selected offer show the current price")
+            self.assertIn("829 PLN", refreshed, "other store offer keeps its own price")
             self.assertRegex(refreshed, r"Sprawdzono:\s*\S+", "successful refresh renders the last-check time")
             refreshed_product = self.webdriver(
                 "POST",
@@ -751,11 +756,11 @@ class BuilderSmokeTest(unittest.TestCase):
             )["value"]
             self.assertEqual(
                 [(offer["source"], offer["price"], bool(offer.get("checked_at"))) for offer in refreshed_product["offers"]],
-                [("x-kom", 749, True), ("prepared-shop", 749, True)],
-                "refresh updates price and check time for every offer without changing its source",
+                [("x-kom", 749, True), ("prepared-shop", 829, False)],
+                "refresh updates only the selected offer without changing its source",
             )
             self.assertEqual(refreshed_product.get("last_price"), 749, "public product data exposes the latest measured price")
-            self.assertEqual(refreshed_product.get("previous_price"), 829, "public product data preserves the prior catalog price")
+            self.assertEqual(refreshed_product.get("previous_price"), 799, "public product data preserves the prior selected-offer price")
             self.assertRegex(refreshed_product.get("last_checked", ""), r"T\S+", "latest measurement exposes its check date")
             self.assertRegex(refreshed_product.get("previous_checked", ""), r"T\S+", "previous measurement exposes its check date")
             self.assertIn(refreshed_product["last_checked"], refreshed, "catalog shows the latest measurement date")
@@ -868,6 +873,153 @@ class BuilderSmokeTest(unittest.TestCase):
             self.assertIn("1199 PLN", growth_refreshed, "catalog shows the increased price")
             self.assertIn("1000 PLN", growth_refreshed, "catalog keeps the lower measured price visible")
             self.assertIn("Cena wzrosla", growth_refreshed, "catalog explains the price increase")
+        finally:
+            if 'session_id' in locals():
+                try:
+                    self.webdriver("DELETE", f"/session/{session_id}")
+                except OSError:
+                    pass
+            driver_process.terminate()
+            driver_process.wait(timeout=3)
+            app_process.terminate()
+            app_process.wait(timeout=3)
+
+    def test_buyer_can_view_history_for_selected_store_offer_after_refresh(self):
+        with socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            app_port = listener.getsockname()[1]
+        with socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            self.webdriver_port = listener.getsockname()[1]
+        app_process = subprocess.Popen([sys.executable, "app.py", "--port", str(app_port)], cwd=ROOT)
+        driver_process = subprocess.Popen(
+            ["geckodriver", "--port", str(self.webdriver_port)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            for _ in range(20):
+                try:
+                    with urlopen(f"http://127.0.0.1:{self.webdriver_port}/status", timeout=0.2):
+                        break
+                except OSError:
+                    time.sleep(0.1)
+            else:
+                self.skipTest("geckodriver is unavailable")
+            session = self.webdriver("POST", "/session", {"capabilities": {"alwaysMatch": {"browserName": "firefox"}}})
+            session_id = session["value"]["sessionId"]
+            base = f"/session/{session_id}"
+            self.webdriver("POST", f"{base}/url", {"url": f"http://127.0.0.1:{app_port}/"})
+            self.webdriver(
+                "POST",
+                f"{base}/execute/sync",
+                {
+                    "script": """
+                        fetch('/api/import', {
+                          method: 'POST',
+                          headers: {'Content-Type': 'application/json'},
+                          body: JSON.stringify({products: [
+                            {id: 'history-xkom', model: 'ryzen-5-7600', name: 'Ryzen 5 7600 x-kom', price: 799, source: 'x-kom'},
+                            {id: 'history-other', model: 'ryzen-5-7600', name: 'Ryzen 5 7600 prepared', price: 1299, source: 'prepared-shop'}
+                          ]})
+                        }).then(() => refreshCatalog());
+                    """,
+                    "args": [],
+                },
+            )
+            for _ in range(20):
+                catalog = self.webdriver(
+                    "POST",
+                    f"{base}/execute/sync",
+                    {"script": "return document.querySelector('#catalog-products')?.textContent || ''", "args": []},
+                )["value"]
+                if "ryzen-5-7600" in catalog and "799 PLN" in catalog:
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail("custom prepared offers did not render")
+
+            initial_catalog = self.webdriver(
+                "POST",
+                f"{base}/execute/sync",
+                {"script": "return fetch('/api/catalog').then(response => response.json())", "args": []},
+            )["value"]
+            initial_product = next(item for item in initial_catalog["products"] if item["model"] == "ryzen-5-7600")
+            initial_other_offer = next(
+                item for item in initial_product["offers"] if item.get("source") == "prepared-shop"
+            )
+            expected_other_history = list(initial_other_offer.get("price_history", []))
+
+            self.webdriver(
+                "POST",
+                f"{base}/execute/sync",
+                {"script": "document.querySelector('#catalog-products li button').click()", "args": []},
+            )
+            time.sleep(1.1)
+            self.webdriver(
+                "POST",
+                f"{base}/execute/sync",
+                {"script": "document.querySelector('#catalog-products li button').click()", "args": []},
+            )
+            for _ in range(20):
+                report = self.webdriver(
+                    "POST",
+                    f"{base}/execute/sync",
+                    {
+                        "script": "return fetch('/api/catalog').then(response => response.json())",
+                        "args": [],
+                    },
+                )["value"]
+                product = next((item for item in report["products"] if item["model"] == "ryzen-5-7600"), None)
+                offer = next((item for item in (product or {}).get("offers", []) if item.get("source") == "x-kom"), None)
+                if offer:
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail("selected offer history did not render in the public catalog")
+
+            self.assertIn("price_history", offer, "selected offer exposes its public price history")
+            history = offer.get("price_history", [])
+            other_offer = next(item for item in product["offers"] if item.get("source") == "prepared-shop")
+            with self.subTest("catalog exposes selected store history in newest-first order"):
+                self.assertEqual(len(history), 3, "selected offer exposes exactly its initial and two refreshed measurements")
+                self.assertEqual([measurement["price"] for measurement in history[:3]], [749, 749, 799])
+                self.assertEqual(
+                    [measurement["checked_at"] for measurement in history[:3]],
+                    sorted((measurement["checked_at"] for measurement in history[:3]), reverse=True),
+                )
+                self.assertIn("x-kom", catalog)
+            with self.subTest("history does not mix another offer"):
+                self.assertNotIn(1299, [measurement["price"] for measurement in history])
+                self.assertEqual(
+                    other_offer.get("price_history"),
+                    expected_other_history,
+                    "refreshing x-kom leaves the other offer history unchanged",
+                )
+            with self.subTest("browser renders the refreshed selected offer history"):
+                rendered = self.webdriver(
+                    "POST",
+                    f"{base}/execute/sync",
+                    {"script": "return document.querySelector('#catalog-products li').textContent", "args": []},
+                )["value"]
+                self.assertIn("Historia ceny", rendered)
+                self.assertIn("x-kom", rendered)
+                for price in (799, 749):
+                    self.assertIn(f"{price} PLN", rendered)
+                for measurement in history[:3]:
+                    self.assertIn(measurement["checked_at"], rendered)
+                rendered_history = rendered.split("Historia ceny (x-kom): ", 1)[1]
+                rendered_dates = [measurement["checked_at"] for measurement in history[:3]]
+                self.assertLess(
+                    rendered_history.index(rendered_dates[0]),
+                    rendered_history.index(rendered_dates[1]),
+                    "browser renders the newest measurement before the next one",
+                )
+                self.assertLess(
+                    rendered_history.index(rendered_dates[1]),
+                    rendered_history.index(rendered_dates[2]),
+                    "browser renders measurements in newest-first order",
+                )
         finally:
             if 'session_id' in locals():
                 try:
@@ -1582,10 +1734,20 @@ class BuilderSmokeTest(unittest.TestCase):
                 "name": "AMD Ryzen 5 7600",
                 "offers": payload["products"][:2],
             }
+            imported_product = report["products"][0]
+            self.assertEqual(imported_product["id"], expected_product["id"])
+            self.assertEqual(imported_product["name"], expected_product["name"])
             self.assertEqual(
-                report["products"][0],
-                expected_product,
+                [
+                    {key: offer[key] for key in ("id", "model", "name", "price", "source")}
+                    for offer in imported_product["offers"]
+                ],
+                expected_product["offers"],
                 "one product preserves both complete offers with price and source",
+            )
+            self.assertTrue(
+                all(len(offer.get("price_history", [])) == 1 for offer in imported_product["offers"]),
+                "each imported offer starts its own price history",
             )
             self.assertEqual(
                 report["products"][1],
