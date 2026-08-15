@@ -31,6 +31,10 @@ GPUS = {
     "rtx-4070": {"name": "GeForce RTX 4070", "price": 2399, "key_parameter": "12 GB VRAM"},
     "rtx-4080": {"name": "GeForce RTX 4080", "price": 3199, "key_parameter": "16 GB VRAM"},
 }
+GPU_USEFULNESS = {
+    "gaming": {"rtx-4070": 90, "rtx-4080": 95},
+    "programming": {"rtx-4070": 45, "rtx-4080": 45},
+}
 
 DISKS = {
     "nvme-1tb": {"name": "Samsung 990 EVO 1 TB", "price": 399},
@@ -608,10 +612,6 @@ def compare_gpus(first_id: str, second_id: str, purpose: str, catalog: list[dict
         raise ValueError("unknown second GPU selection")
     if first_id == second_id:
         raise ValueError("two different GPU selections are required")
-    ratings = {
-        "gaming": {"rtx-4070": 90, "rtx-4080": 95},
-        "programming": {"rtx-4070": 45, "rtx-4080": 45},
-    }
     products = [first, second]
     if any(not isinstance(product.get("price"), (int, float)) for product in products):
         raise ValueError("GPU price is unavailable")
@@ -622,7 +622,7 @@ def compare_gpus(first_id: str, second_id: str, purpose: str, catalog: list[dict
             "name": product["name"],
             "price": product["price"],
             "key_parameter": product.get("key_parameter"),
-            "usefulness": ratings[purpose].get(product["model"], 0),
+            "usefulness": GPU_USEFULNESS[purpose].get(product["model"], 0),
         }
         for product in products
     ]
