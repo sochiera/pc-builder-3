@@ -1083,7 +1083,7 @@ PAGE = """<!doctype html>
         renderVariant();
       }
      async function recommendSet() {
-       const recommendationGeneration = buildRefreshGeneration;
+       const recommendationGeneration = ++buildRefreshGeneration;
        const budget = readBudget();
         const purpose = document.querySelector('#purpose').value;
         if (budget === null || !Number.isFinite(budget) || budget < 0) return;
