@@ -162,6 +162,41 @@ class BuilderSmokeTest(unittest.TestCase):
                     },
                     "each offer link targets its prepared offer",
                 )
+            for expected_url, expected_navigation_url in (
+                ("https://x-kom.pl/p/offer-1", "https://www.x-kom.pl/p/offer-1"),
+                ("https://prepared-shop.example/oferta/offer-2", "https://prepared-shop.example/oferta/offer-2"),
+            ):
+                link = self.webdriver(
+                    "POST",
+                    f"{base}/element",
+                    {"using": "css selector", "value": f'a[href="{expected_url}"]'},
+                )
+                try:
+                    self.webdriver(
+                        "POST",
+                        f"{base}/element/{link['value']['element-6066-11e4-a52e-4f735466cecf']}/click",
+                        {},
+                    )
+                except HTTPError:
+                    # Geckodriver can report DNS failure after navigating to a prepared URL.
+                    pass
+                self.assertEqual(
+                    self.webdriver("GET", f"{base}/url")["value"],
+                    expected_navigation_url,
+                    "clicking an offer opens its controlled destination",
+                )
+                self.webdriver("POST", f"{base}/url", {"url": f"http://127.0.0.1:{app_port}/"})
+                for _ in range(20):
+                    catalog_after_navigation = self.webdriver(
+                        "POST",
+                        f"{base}/execute/sync",
+                        {"script": "return document.querySelector('#catalog-products')?.textContent || ''", "args": []},
+                    )["value"]
+                    if "ryzen-5-7600" in catalog_after_navigation:
+                        break
+                    time.sleep(0.1)
+                else:
+                    self.fail("catalog did not render after returning from offer")
             missing_url_offer = self.webdriver(
                 "POST",
                 f"{base}/execute/sync",

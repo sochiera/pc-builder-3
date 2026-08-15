@@ -1185,6 +1185,18 @@ PAGE = """<!doctype html>
           saveStatus.textContent = `Blad odczytu: ${error.message}`;
         }
       }
+      function appendOffer(item, offer) {
+        const details = document.createTextNode(` ${offer.name} - ${offer.price} PLN `);
+        if (offer.url) {
+          const link = document.createElement('a');
+          link.href = offer.url;
+          link.textContent = offer.source;
+          link.title = `${offer.name} - ${offer.price} PLN`;
+          item.append(details, link);
+        } else {
+          item.append(details, document.createTextNode(offer.source));
+        }
+      }
       function renderCatalog(products) {
         const list = document.querySelector('#catalog-products');
         list.replaceChildren();
@@ -1203,18 +1215,7 @@ PAGE = """<!doctype html>
              search.addEventListener('click', () => searchProductOffer(product.model));
              item.append(document.createTextNode(' '), search);
            }
-           (product.offers || []).forEach(offer => {
-            const details = document.createTextNode(` ${offer.name} - ${offer.price} PLN `);
-            if (offer.url) {
-              const link = document.createElement('a');
-              link.href = offer.url;
-              link.textContent = offer.source;
-              link.title = `${offer.name} - ${offer.price} PLN`;
-              item.append(details, link);
-            } else {
-              item.append(details, document.createTextNode(offer.source));
-            }
-            });
+            (product.offers || []).forEach(offer => appendOffer(item, offer));
           if (product.last_checked) {
             item.append(document.createTextNode(` Sprawdzono: ${product.last_checked}`));
           }
