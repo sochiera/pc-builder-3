@@ -1,4 +1,4 @@
-## US-026 — Uzytkownik przeglada historie ceny konkretnej oferty [do weryfikacji]
+## US-026 — Uzytkownik przeglada historie ceny konkretnej oferty [zrobiona]
 
 Jako kupujacy chce zobaczyc chronologiczna historie ceny wybranej oferty sklepu, zeby ocenic jej trend bez mieszania cen roznych sprzedawcow.
 
