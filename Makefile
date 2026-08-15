@@ -8,4 +8,5 @@ smoke:
 
 ci: smoke
 
-hardware: smoke
+hardware:
+	python3 -m unittest -v test_app.py
