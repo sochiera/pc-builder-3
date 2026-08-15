@@ -1,3 +1,12 @@
+## US-027 — Uzytkownik wybiera znaleziona oferte sklepu [nowa]
+
+Jako kupujacy chce po wyszukaniu oferty drugiego sklepu porownac ja z oferta x-kom i otworzyc wybrana strone zakupu, zeby skorzystac z korzystniejszej oferty.
+
+- Dlaczego teraz: PROJECT.md uznaje uzyteczne porownanie ofert za warunek sukcesu, a dowod US-023 potwierdza znalezienie oferty, lecz nie porownanie obu ofert ani przejscie przez ich linki.
+- Sekcja briefu: Inne sklepy
+- Sprawdzenie: wyszukaj przygotowana oferte drugiego sklepu dla produktu z oferta x-kom, porownaj widoczne nazwy i ceny, a nastepnie otworz po kolei oba linki i sprawdz ich docelowe adresy.
+- Poza zakresem: trzeci sklep, koszt dostawy, optymalizacja koszyka i automatyczny wybor oferty.
+
 ## US-026 — Uzytkownik przeglada historie ceny konkretnej oferty [zrobiona]
 
 Jako kupujacy chce zobaczyc chronologiczna historie ceny wybranej oferty sklepu, zeby ocenic jej trend bez mieszania cen roznych sprzedawcow.

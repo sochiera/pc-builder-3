@@ -10,7 +10,7 @@ Docelowo uzytkownik buduje kompletny PC, otrzymuje wyjasniona ocene kompatybilno
 
 ## Stan produktu
 
-Dziala pelna lokalna sciezka kupujacego: import i przegladanie katalogu, budowa kompletnego zestawu, analiza zgodnosci, RAM, zasilania i bilansu, budzet, przeznaczenie, automatyczny dobor, porownania oraz warianty. Uzytkownik moze odswiezac i porownywac oferty, przegladac historie ceny konkretnej oferty, zapisac konfiguracje i udostepnic ja linkiem. Zakres zostal potwierdzony zewnetrznymi probami przegladarkowymi i API; nierozliczone, wezsze historyjki zostaly zastapione potwierdzonymi zdolnosciami o szerszym zakresie.
+Dziala lokalna sciezka kupujacego: import i przegladanie katalogu, budowa kompletnego zestawu, analiza zgodnosci, RAM, zasilania i bilansu, budzet, przeznaczenie, automatyczny dobor, porownania oraz warianty. Uzytkownik moze odswiezac oferty, przegladac historie ceny konkretnej oferty, zapisac konfiguracje i udostepnic ja linkiem. Do domkniecia pozostaje zewnetrzna proba porownania znalezionej oferty drugiego sklepu z x-kom i przejscia do obu ofert.
 
 ## Wymagania
 
@@ -34,7 +34,7 @@ Dziala pelna lokalna sciezka kupujacego: import i przegladanie katalogu, budowa 
 
 ## Kolejnosc rozwoju
 
-Zakres podstawowego briefu jest domkniety. Nie otwieramy kolejnych wariantow istniejacych funkcji bez nowego dowodu problemu uzytkownika albo zmiany briefu. Ewentualny dalszy rozwoj powinien zaczac sie od walidacji jednego z pomyslow opcjonalnych.
+Po potwierdzeniu porownania znalezionej oferty drugiego sklepu i przejscia do obu ofert zakres podstawowego briefu bedzie domkniety. Nie otwieramy kolejnych wariantow istniejacych funkcji bez nowego dowodu problemu uzytkownika albo zmiany briefu. Ewentualny dalszy rozwoj powinien zaczac sie od walidacji jednego z pomyslow opcjonalnych.
 
 ## Swiadomie odlozone
 
