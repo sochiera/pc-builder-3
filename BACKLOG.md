@@ -1,3 +1,12 @@
+## US-026 — Uzytkownik przeglada historie ceny konkretnej oferty [nowa]
+
+Jako kupujacy chce zobaczyc chronologiczna historie ceny wybranej oferty sklepu, zeby ocenic jej trend bez mieszania cen roznych sprzedawcow.
+
+- Dlaczego teraz: PROJECT.md wymaga historii cen, a raport weryfikacji nie potwierdzil jeszcze tej sekcji i dotychczasowa historyjka ogranicza sie do dwoch ostatnich pomiarow produktu.
+- Sekcja briefu: Historia cen
+- Sprawdzenie: otworz przygotowana oferte x-kom z co najmniej trzema zapisanymi pomiarami i sprawdz, ze widac nazwe sklepu oraz wszystkie daty i ceny w kolejnosci od najnowszej do najstarszej.
+- Poza zakresem: wykres, alerty, statystyki, prognozowanie i laczenie historii ofert roznych sklepow.
+
 ## US-001 — Operator odswieza katalog x-kom [zrobiona]
 
 Jako operator katalogu chce pobrac komplet aktualnie dostepnych produktow z x-kom i zobaczyc wynik importu, zeby uzytkownicy pracowali na aktualnej ofercie.
@@ -160,7 +169,7 @@ Jako kupujacy chce uruchomic wyszukanie aktualnych ofert dla wybranego produktu 
 - Sprawdzenie: uruchom wyszukanie dla przygotowanego produktu i sprawdz, ze widac odnaleziona cene oraz czas ostatniego sprawdzenia.
 - Poza zakresem: automatyczny harmonogram, powiadomienia i historia zmian.
 
-## US-018 — Uzytkownik porownuje dwa komponenty [w toku]
+## US-018 — Uzytkownik porownuje dwa komponenty [nowa]
 
 Jako kupujacy chce zestawic dwa komponenty tego samego typu obok siebie, zeby zobaczyc roznice ceny i kluczowego parametru.
 
