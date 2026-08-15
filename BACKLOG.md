@@ -61,11 +61,11 @@ Jako skladajacy komputer chce zobaczyc wyjasnienie zaleznosci obejmujacej CPU, p
 - Sprawdzenie: wybierz przygotowane CPU, plyte i chlodzenie, ktore dopiero razem tworza konflikt, i sprawdz, ze wynik wskazuje wszystkie trzy czesci oraz powod.
 - Poza zakresem: drugi rodzaj zaleznosci wieloczynnikowej i automatyczna zamiana czesci.
 
-## US-017 — Uzytkownik wybiera oferte innego sklepu [porzucona: Potrzebę zastępuje potwierdzona US-023, która dostarcza ofertę drugiego sklepu z nazwą, ceną i linkiem.]
+## US-017 — Uzytkownik wybiera oferte innego sklepu [porzucona: Potrzebę łącznie zastępują potwierdzone US-023 i US-027: pierwsza wyszukuje ofertę drugiego sklepu, a druga porównuje ją z x-kom i potwierdza przejście przez oba linki.]
 
 Jako kupujacy chce przy rozpoznanym produkcie porownac oferte x-kom z oferta jednego innego sklepu i przejsc do wybranej, zeby kupic produkt w korzystniejszym miejscu.
 
-- Dlaczego teraz: PROJECT.md przewiduje oferty innych sklepow dla rozpoznanych produktow, a mapa pokrycia wskazuje te sekcje jako nastepna do otwarcia.
+- Dlaczego teraz: Historyjka otworzyla obsluge ofert innych sklepow, lecz jej potrzebe ostatecznie rozliczyly US-023, ktora wyszukuje oferte, oraz potwierdzona US-027, ktora porownuje obie oferty i prowadzi do ich stron zakupu.
 - Sekcja briefu: Inne sklepy
 - Sprawdzenie: otworz przygotowany rozpoznany produkt z oferta x-kom i drugiego sklepu, porownaj widoczne ceny, a nastepnie otworz kazdy link i sprawdz, ze prowadzi do wlasciwej oferty.
 - Poza zakresem: kolejny sklep, koszt dostawy, automatyczne wyszukiwanie ofert i optymalizacja koszyka.
