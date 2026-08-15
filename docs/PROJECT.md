@@ -8,9 +8,9 @@ Konfigurator pomaga osobom skladajacym PC wybrac czesci oraz zrozumiec ich zgodn
 
 Docelowo uzytkownik buduje kompletny PC, otrzymuje wyjasniona ocene kompatybilnosci, bilansu i ceny oraz moze wrocic do udostepnionej konfiguracji. Sukces to aktualizowana baza produktow z x-kom, wiarygodna analiza wieloczynnikowa i uzyteczne porownanie ofert.
 
-## Stan szkieletu
+## Stan produktu
 
-Stoi jedna dzialajaca sciezka: wybor CPU i plyty glownej w przegladarce, wywolanie API, obliczenie lacznej ceny oraz blokada przy niezgodnym sockecie. Regula jest wykonywana na serwerze Python; test uruchamia ten sam serwer i sprawdza odpowiedz API. Dane sa celowo przykadowe i lokalne.
+Dziala pelna lokalna sciezka kupujacego: import i przegladanie katalogu, budowa kompletnego zestawu, analiza zgodnosci, RAM, zasilania i bilansu, budzet, przeznaczenie, automatyczny dobor, porownania oraz warianty. Uzytkownik moze odswiezac i porownywac oferty, przegladac historie ceny konkretnej oferty, zapisac konfiguracje i udostepnic ja linkiem. Zakres zostal potwierdzony zewnetrznymi probami przegladarkowymi i API; nierozliczone, wezsze historyjki zostaly zastapione potwierdzonymi zdolnosciami o szerszym zakresie.
 
 ## Wymagania
 
@@ -34,8 +34,8 @@ Stoi jedna dzialajaca sciezka: wybor CPU i plyty glownej w przegladarce, wywolan
 
 ## Kolejnosc rozwoju
 
-Najpierw rozszerzyc model danych i analize do RAM, GPU i PSU wraz z testami reguly serwerowej, nastepnie dodac trwale dane oraz import produktu. Dopiero potem katalog, filtrowanie, oferty, zapis i warianty.
+Zakres podstawowego briefu jest domkniety. Nie otwieramy kolejnych wariantow istniejacych funkcji bez nowego dowodu problemu uzytkownika albo zmiany briefu. Ewentualny dalszy rozwoj powinien zaczac sie od walidacji jednego z pomyslow opcjonalnych.
 
 ## Swiadomie odlozone
 
-Nie ma jeszcze katalogu, importu, zewnetrznych cen, persystencji, kont, porownan, budzetu ani analiz poza socketem CPU-plyta. Nie sa to obietnice szkieletu ani dlug implementacyjny tego zadania.
+Konta, synchronizacja miedzy urzadzeniami, optymalizacja koszyka wielu sklepow, alerty cenowe i prognozowanie nie naleza do zakonczonego zakresu. Kryterium ukonczenia, podsumowanie briefu i opis testowania sa kontekstem procesu, a nie osobnymi zdolnosciami uzytkownika.

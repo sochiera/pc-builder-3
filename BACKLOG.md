@@ -52,7 +52,7 @@ Jako skladajacy komputer chce zobaczyc wyjasnienie zaleznosci obejmujacej CPU, p
 - Sprawdzenie: wybierz przygotowane CPU, plyte i chlodzenie, ktore dopiero razem tworza konflikt, i sprawdz, ze wynik wskazuje wszystkie trzy czesci oraz powod.
 - Poza zakresem: drugi rodzaj zaleznosci wieloczynnikowej i automatyczna zamiana czesci.
 
-## US-017 — Uzytkownik wybiera oferte innego sklepu [w toku]
+## US-017 — Uzytkownik wybiera oferte innego sklepu [porzucona: Potrzebę zastępuje potwierdzona US-023, która dostarcza ofertę drugiego sklepu z nazwą, ceną i linkiem; dalsze domykanie duplikowałoby rozliczoną zdolność.]
 
 Jako kupujacy chce przy rozpoznanym produkcie porownac oferte x-kom z oferta jednego innego sklepu i przejsc do wybranej, zeby kupic produkt w korzystniejszym miejscu.
 
@@ -223,7 +223,7 @@ Jako kupujacy chce utworzyc link do zapisanego zestawu, zeby druga osoba mogla g
 - Sprawdzenie: utworz link do przygotowanego zapisanego zestawu i otworz go w nowej sesji, sprawdzajac zgodnosc czesci i podsumowania ceny.
 - Poza zakresem: edycja przez odbiorce, prywatne linki, wygasanie i media spolecznosciowe.
 
-## US-022 — Uzytkownik sprawdza historie ceny [w toku]
+## US-022 — Uzytkownik sprawdza historie ceny [porzucona: Potrzebę zastępuje potwierdzona US-026, która pokazuje pełną chronologiczną historię konkretnej oferty i obejmuje szerszy zakres niż dwa ostatnie pomiary.]
 
 Jako kupujacy chce zobaczyc ostatnia i poprzednia cene wybranego produktu, zeby ocenic, czy obecna oferta spadla czy wzrosla.
 
