@@ -214,7 +214,7 @@ Jako kupujacy chce utworzyc link do zapisanego zestawu, zeby druga osoba mogla g
 - Sprawdzenie: utworz link do przygotowanego zapisanego zestawu i otworz go w nowej sesji, sprawdzajac zgodnosc czesci i podsumowania ceny.
 - Poza zakresem: edycja przez odbiorce, prywatne linki, wygasanie i media spolecznosciowe.
 
-## US-022 — Uzytkownik sprawdza historie ceny [do weryfikacji]
+## US-022 — Uzytkownik sprawdza historie ceny [w toku]
 
 Jako kupujacy chce zobaczyc ostatnia i poprzednia cene wybranego produktu, zeby ocenic, czy obecna oferta spadla czy wzrosla.
 
