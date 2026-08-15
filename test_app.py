@@ -1224,6 +1224,85 @@ class BuilderSmokeTest(unittest.TestCase):
             app_process.terminate()
             app_process.wait(timeout=3)
 
+    def test_public_gpu_comparison_returns_key_parameters_and_difference(self):
+        payload = {
+            "products": [
+                {
+                    "id": "gpu-offer-4070",
+                    "model": "rtx-4070",
+                    "name": "GeForce RTX 4070",
+                    "price": 2399,
+                    "source": "prepared-shop",
+                    "key_parameter": "12 GB VRAM",
+                },
+                {
+                    "id": "gpu-offer-4080",
+                    "model": "rtx-4080",
+                    "name": "GeForce RTX 4080",
+                    "price": 3199,
+                    "source": "prepared-shop",
+                    "key_parameter": "16 GB VRAM",
+                },
+            ]
+        }
+        with socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            port = listener.getsockname()[1]
+        base_url = f"http://127.0.0.1:{port}"
+        process = subprocess.Popen([sys.executable, "app.py", "--port", str(port)], cwd=ROOT)
+        try:
+            for _ in range(20):
+                try:
+                    with urlopen(base_url, timeout=0.2):
+                        break
+                except OSError:
+                    time.sleep(0.1)
+            else:
+                self.fail("Application did not start")
+
+            import_request = Request(
+                f"{base_url}/api/import",
+                data=json.dumps(payload).encode(),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urlopen(import_request) as response:
+                self.assertEqual(response.status, 200, "prepared GPUs can be imported")
+            with urlopen(f"{base_url}/api/catalog") as response:
+                catalog = json.load(response)
+            options_by_model = {
+                option["model"]: option
+                for option in catalog["options"]
+                if option.get("type") == "gpu"
+            }
+            first_gpu_id = options_by_model["rtx-4070"]["id"]
+            second_gpu_id = options_by_model["rtx-4080"]["id"]
+            comparison_request = Request(
+                f"{base_url}/api/compare",
+                data=json.dumps({"first_gpu": first_gpu_id, "second_gpu": second_gpu_id, "purpose": "gaming"}).encode(),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urlopen(comparison_request) as response:
+                self.assertEqual(response.status, 200, "public GPU comparison accepts two selections")
+                comparison = json.load(response)
+
+            components = {component["model"]: component for component in comparison["components"]}
+            with self.subTest("public comparison returns both selected GPUs and prices"):
+                self.assertEqual(set(components), {"rtx-4070", "rtx-4080"})
+                self.assertEqual(components["rtx-4070"]["price"], 2399)
+                self.assertEqual(components["rtx-4080"]["price"], 3199)
+            with self.subTest("public comparison returns each key parameter"):
+                self.assertEqual(components["rtx-4070"]["key_parameter"], "12 GB VRAM")
+                self.assertEqual(components["rtx-4080"]["key_parameter"], "16 GB VRAM")
+            with self.subTest("public comparison explains the parameter difference"):
+                self.assertIn("12 GB VRAM", comparison["parameter_difference"])
+                self.assertIn("16 GB VRAM", comparison["parameter_difference"])
+                self.assertIn("Roznica parametru:", comparison["parameter_difference"])
+        finally:
+            process.terminate()
+            process.wait(timeout=3)
+
     def test_buyer_can_compare_two_prepared_motherboards_in_current_build(self):
         with socket() as listener:
             listener.bind(("127.0.0.1", 0))

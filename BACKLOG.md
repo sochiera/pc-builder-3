@@ -169,7 +169,7 @@ Jako kupujacy chce uruchomic wyszukanie aktualnych ofert dla wybranego produktu 
 - Sprawdzenie: uruchom wyszukanie dla przygotowanego produktu i sprawdz, ze widac odnaleziona cene oraz czas ostatniego sprawdzenia.
 - Poza zakresem: automatyczny harmonogram, powiadomienia i historia zmian.
 
-## US-018 — Uzytkownik porownuje dwa komponenty [nowa]
+## US-018 — Uzytkownik porownuje dwa komponenty [do weryfikacji]
 
 Jako kupujacy chce zestawic dwa komponenty tego samego typu obok siebie, zeby zobaczyc roznice ceny i kluczowego parametru.
 
