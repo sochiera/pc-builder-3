@@ -242,15 +242,48 @@ def open_configuration(payload: dict) -> dict:
     save_id = payload.get("save_id")
     if not isinstance(save_id, str) or not save_id:
         raise ValueError("save_id is required")
-    saved = load_saves().get(save_id)
-    if saved is None:
-        raise ValueError("saved build not found")
+    saved = saved_configuration(save_id)
     merge_selected_catalog_snapshot(saved.get("catalog"), saved["selections"])
     return {
         "save_id": save_id,
         "selections": saved["selections"],
         "purpose": saved["purpose"],
         "budget": saved["budget"],
+    }
+
+
+def saved_configuration(save_id: str) -> dict:
+    if not isinstance(save_id, str) or not save_id:
+        raise ValueError("save_id is required")
+    saved = load_saves().get(save_id)
+    if saved is None:
+        raise ValueError("saved build not found")
+    return saved
+
+
+def share_configuration(payload: dict) -> dict:
+    save_id = payload.get("save_id")
+    saved_configuration(save_id)
+    return {"url": f"/share/{save_id}"}
+
+
+def public_configuration(save_id: str) -> dict:
+    saved = saved_configuration(save_id)
+    build = build_from_selections(
+        saved["selections"],
+        saved["catalog"]["options"],
+        saved["purpose"],
+        saved["budget"],
+    )
+    return {
+        "save_id": save_id,
+        "selections": saved["selections"],
+        "purpose": saved["purpose"],
+        "budget": budget_relation(build["total"], saved["budget"]),
+        "total": build["total"],
+        "analysis": build["analysis"],
+        "build": build,
+        "catalog": saved["catalog"],
     }
 
 
@@ -738,7 +771,7 @@ PAGE = """<!doctype html>
   <header><h1>Buduj PC</h1><p class='lead'>Sprawdz kompatybilnosc zestawu na biezaco.</p></header>
   <main>
     <section id='selectors'></section>
-      <section id='base-build' class='summary' aria-live='polite'><label for='purpose'>Przeznaczenie zestawu</label><select id='purpose'><option value='gaming'>Gaming</option><option value='programming'>Programowanie</option></select><label for='budget'>Maksymalny budzet (PLN)</label><input id='budget' type='number' min='0' step='1' placeholder='Podaj budzet'><button id='recommend' type='button'>Dobierz najtanszy zestaw</button><p><button id='save' type='button'>Zapisz zestaw</button><input id='save-id' type='text' placeholder='Identyfikator zapisu'><button id='open' type='button'>Otworz zapis</button></p><p id='save-status' aria-live='polite'></p><p id='budget-summary'></p><strong id='status'>Wybierz czesci...</strong><p id='total'></p><p id='power'></p><p id='balance'></p><div id='issue'></div><ul id='build-products'></ul></section>
+      <section id='base-build' class='summary' aria-live='polite'><label for='purpose'>Przeznaczenie zestawu</label><select id='purpose'><option value='gaming'>Gaming</option><option value='programming'>Programowanie</option></select><label for='budget'>Maksymalny budzet (PLN)</label><input id='budget' type='number' min='0' step='1' placeholder='Podaj budzet'><button id='recommend' type='button'>Dobierz najtanszy zestaw</button><p><button id='save' type='button'>Zapisz zestaw</button><input id='save-id' type='text' placeholder='Identyfikator zapisu'><button id='open' type='button'>Otworz zapis</button><button id='share' type='button'>Udostepnij zestaw</button></p><p id='save-status' aria-live='polite'></p><p id='share-result'></p><p id='budget-summary'></p><strong id='status'>Wybierz czesci...</strong><p id='total'></p><p id='power'></p><p id='balance'></p><div id='issue'></div><ul id='build-products'></ul></section>
      <section id='variants'></section>
     <section class='summary'>
       <button id='import' type='button'>Importuj odpowiedz x-kom</button>
@@ -776,6 +809,7 @@ PAGE = """<!doctype html>
       let buildCatalog = [];
       let variantState = null;
       let variantRefreshGeneration = 0;
+      let shareSaveId = '';
      const purposeOptions = [...document.querySelectorAll('#purpose option')];
      const preparedResponse = { products: [
         { id: 'offer-1', model: 'ryzen-5-7600', name: 'AMD Ryzen 5 7600 BOX', price: 799, source: 'x-kom', url: 'https://x-kom.pl/p/offer-1' },
@@ -822,7 +856,7 @@ PAGE = """<!doctype html>
           option.textContent = `${product.name} - ${product.price} PLN`;
           select.append(option);
         });
-        select.addEventListener('change', refreshBuild);
+         select.addEventListener('change', () => refreshBuild());
         label.append(select);
          container.append(label);
        });
@@ -853,7 +887,7 @@ PAGE = """<!doctype html>
         function currentSelections() {
           return Object.fromEntries(requiredTypes.map(type => [type, document.querySelector(`#${type}`).value]));
         }
-       async function refreshBuild() {
+        async function refreshBuild(savedBuild = null) {
         const refreshGeneration = ++buildRefreshGeneration;
         const selections = currentSelections();
        if (Object.values(selections).some(value => !value)) {
@@ -864,13 +898,25 @@ PAGE = """<!doctype html>
       if (!purposeOptions.some(option => option.value === purpose)) return;
        const budget = readBudget();
       if (budget !== null && (!Number.isFinite(budget) || budget < 0)) return;
-      const response = await fetch('/api/build', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ selections, purpose, budget })
-       });
-       const build = await response.json();
-       if (refreshGeneration !== buildRefreshGeneration) return;
+       let build = savedBuild;
+        if (!build) {
+         const response = await fetch('/api/build', {
+           method: 'POST',
+           headers: { 'Content-Type': 'application/json' },
+           body: JSON.stringify({ selections, purpose, budget })
+          });
+          build = await response.json();
+        }
+        if (refreshGeneration !== buildRefreshGeneration) return;
+        const currentState = {
+          selections: currentSelections(),
+          purpose: document.querySelector('#purpose').value,
+          budget: readBudget(),
+        };
+        if (!savedBuild && JSON.stringify(currentState) !== JSON.stringify({ selections, purpose, budget })) {
+          refreshBuild();
+          return;
+        }
         const status = document.querySelector('#status');
        const statusPresentation = {
          compatible: { label: 'Kompatybilny zestaw', className: 'ok' },
@@ -989,8 +1035,9 @@ PAGE = """<!doctype html>
         variantState.build = build;
         renderVariant();
       }
-      async function recommendSet() {
-         const budget = readBudget();
+     async function recommendSet() {
+       const recommendationGeneration = buildRefreshGeneration;
+       const budget = readBudget();
         const purpose = document.querySelector('#purpose').value;
         if (budget === null || !Number.isFinite(budget) || budget < 0) return;
         try {
@@ -999,9 +1046,10 @@ PAGE = """<!doctype html>
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ purpose, budget })
           });
-          const recommendation = await response.json();
-          if (!response.ok) throw new Error(recommendation.error || 'Dobor zestawu nie powiodl sie');
-          const productsById = Object.fromEntries(buildCatalog.map(product => [product.id, product]));
+           const recommendation = await response.json();
+           if (!response.ok) throw new Error(recommendation.error || 'Dobor zestawu nie powiodl sie');
+           if (recommendationGeneration !== buildRefreshGeneration) return;
+           const productsById = Object.fromEntries(buildCatalog.map(product => [product.id, product]));
           const selections = Object.fromEntries(
             recommendation.products.map(id => [productsById[id]?.type, id])
           );
@@ -1030,7 +1078,7 @@ PAGE = """<!doctype html>
          const report = await response.json();
          if (!response.ok) throw new Error(report.error || 'Import nie powiodl sie');
          renderImportedProducts(report.products);
-         await refreshCatalog();
+          await refreshCatalog();
          status.textContent = `Zaimportowano: ${report.count}`;
        } catch (error) {
          status.textContent = `Blad importu: ${error.message}`;
@@ -1047,13 +1095,53 @@ PAGE = """<!doctype html>
           });
           const result = await response.json();
           if (!response.ok) throw new Error(result.error || 'Zapis nie powiodl sie');
-          document.querySelector('#save-id').value = result.save_id;
-          saveStatus.textContent = `Zapisano zestaw: ${result.save_id}`;
+            shareSaveId = result.save_id;
+            document.querySelector('#save-id').value = result.save_id;
+           saveStatus.textContent = `Zapisano zestaw: ${result.save_id}`;
         } catch (error) {
           saveStatus.textContent = `Blad zapisu: ${error.message}`;
         }
       }
-      async function openBuild() {
+       async function shareBuild() {
+         const saveStatus = document.querySelector('#save-status');
+         const shareResult = document.querySelector('#share-result');
+          const saveId = document.querySelector('#save-id').value.trim();
+         try {
+           const response = await fetch('/api/share', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ save_id: saveId }) });
+           const result = await response.json();
+           if (!response.ok) throw new Error(result.error || 'Udostepnianie nie powiodlo sie');
+           const link = document.createElement('a');
+           link.id = 'share-link';
+           link.href = new URL(result.url, window.location.origin).href;
+           link.textContent = link.href;
+           shareResult.replaceChildren(link);
+           saveStatus.textContent = `Udostepniono zestaw: ${saveId}`;
+         } catch (error) {
+           shareResult.textContent = '';
+           saveStatus.textContent = `Blad udostepniania: ${error.message}`;
+         }
+       }
+       async function loadSharedBuild() {
+         const response = await fetch(window.location.pathname, { headers: { Accept: 'application/json' } });
+         const result = await response.json();
+         if (!response.ok) throw new Error(result.error || 'Nie mozna otworzyc udostepnionego zestawu');
+         shareSaveId = result.save_id;
+         document.querySelector('#save-id').value = result.save_id;
+         document.querySelector('#purpose').value = result.purpose;
+         document.querySelector('#budget').value = result.budget.limit;
+         catalog = result.catalog.products;
+         buildCatalog = result.catalog.options;
+         renderCatalogTypeOptions();
+         filterCatalog();
+         renderSelectors(buildCatalog);
+         requiredTypes.forEach(type => {
+           const select = document.querySelector(`#${type}`);
+           if (select) select.value = result.selections[type];
+         });
+          await refreshBuild(result.build);
+         document.querySelector('#save-status').textContent = `Otworzono udostepniony zestaw: ${result.save_id}`;
+       }
+       async function openBuild() {
         const saveStatus = document.querySelector('#save-status');
         const saveId = document.querySelector('#save-id').value.trim();
         try {
@@ -1064,14 +1152,15 @@ PAGE = """<!doctype html>
           });
           const result = await response.json();
           if (!response.ok) throw new Error(result.error || 'Odczyt nie powiodl sie');
-          document.querySelector('#purpose').value = result.purpose;
+           shareSaveId = result.save_id;
+           document.querySelector('#purpose').value = result.purpose;
           document.querySelector('#budget').value = result.budget;
-          await refreshCatalog();
+           await refreshCatalog();
           requiredTypes.forEach(type => {
             const select = document.querySelector(`#${type}`);
             if (select) select.value = result.selections[type];
           });
-          await refreshBuild();
+           await refreshBuild();
           saveStatus.textContent = `Otworzono zestaw: ${result.save_id}`;
         } catch (error) {
           saveStatus.textContent = `Blad odczytu: ${error.message}`;
@@ -1320,11 +1409,16 @@ PAGE = """<!doctype html>
        refreshBuild();
        renderComparison();
      });
-    document.querySelector('#budget').addEventListener('change', refreshBuild);
+      document.querySelector('#budget').addEventListener('change', () => refreshBuild());
      document.querySelector('#recommend').addEventListener('click', recommendSet);
-     document.querySelector('#save').addEventListener('click', saveBuild);
-     document.querySelector('#open').addEventListener('click', openBuild);
-     refreshCatalog();
+      document.querySelector('#save').addEventListener('click', saveBuild);
+      document.querySelector('#open').addEventListener('click', openBuild);
+      document.querySelector('#share').addEventListener('click', shareBuild);
+      if (window.location.pathname.startsWith('/share/')) {
+        loadSharedBuild().catch(error => showBuildError(error.message));
+      } else {
+        refreshCatalog();
+      }
   </script>
 </body>
 </html>"""
@@ -1412,6 +1506,18 @@ class Handler(BaseHTTPRequestHandler):
         if request.path == "/":
             self.respond(HTTPStatus.OK, "text/html; charset=utf-8", PAGE.encode())
             return
+        if request.path.startswith("/share/"):
+            save_id = request.path.removeprefix("/share/")
+            try:
+                result = public_configuration(save_id)
+            except (ValueError, TypeError, KeyError, json.JSONDecodeError) as error:
+                self.respond(HTTPStatus.NOT_FOUND, "text/plain; charset=utf-8", str(error).encode())
+                return
+            if "text/html" in self.headers.get("Accept", ""):
+                self.respond(HTTPStatus.OK, "text/html; charset=utf-8", PAGE.encode())
+            else:
+                self.respond(HTTPStatus.OK, "application/json", json.dumps(result).encode())
+            return
         if request.path == "/api/analyse":
             query = parse_qs(request.query)
             try:
@@ -1434,7 +1540,7 @@ class Handler(BaseHTTPRequestHandler):
         request = urlparse(self.path)
         if request.path not in (
             "/api/import", "/api/build", "/api/recommend", "/api/refresh",
-            "/api/search-offer", "/api/save", "/api/open", "/api/compare",
+            "/api/search-offer", "/api/save", "/api/open", "/api/share", "/api/compare",
         ):
             self.respond(HTTPStatus.NOT_FOUND, "text/plain", b"Not found")
             return
@@ -1447,6 +1553,10 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if request.path == "/api/open":
                 result = open_configuration(payload)
+                self.respond(HTTPStatus.OK, "application/json", json.dumps(result).encode())
+                return
+            if request.path == "/api/share":
+                result = share_configuration(payload)
                 self.respond(HTTPStatus.OK, "application/json", json.dumps(result).encode())
                 return
             if request.path == "/api/build":

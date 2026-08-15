@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 from socket import socket
 from urllib.error import HTTPError
+from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 
@@ -2788,20 +2789,48 @@ class BuilderSmokeTest(unittest.TestCase):
             self.assertIsInstance(saved.get("save_id"), str, "save returns a stable save identifier")
             self.assertTrue(saved["save_id"], "save identifier is not empty")
             save_id = saved["save_id"]
+            share_status, shared = request(port, "/api/share", {"save_id": save_id})
+            self.assertEqual(share_status, 200, "a saved build can produce a public link")
+            share_url = shared.get("url")
+            self.assertIsInstance(share_url, str, "sharing returns a public opening address")
+            self.assertIn(save_id, share_url, "public link contains the stable saved-build identifier")
+            parsed_share_url = urlsplit(share_url)
+            share_path = parsed_share_url.path
+            if parsed_share_url.query:
+                share_path += f"?{parsed_share_url.query}"
+            with urlopen(f"http://127.0.0.1:{port}{share_path}") as response:
+                shared_build = json.load(response)
+            self.assertEqual(shared_build.get("selections"), selections, "public link restores every selected part")
+            self.assertEqual(shared_build.get("purpose"), "programming", "public link restores the purpose")
+            self.assertEqual(shared_build.get("budget", {}).get("limit"), 7000, "public link restores the budget")
+            self.assertEqual(shared_build.get("total"), saved_total, "public link restores the current total")
+            self.assertEqual(shared_build.get("analysis"), saved_build.get("analysis"), "public link restores the build analysis")
+            invalid_share_path = share_path.replace(save_id, "missing-save-id")
+            with self.assertRaises(HTTPError) as invalid_link:
+                urlopen(f"http://127.0.0.1:{port}{invalid_share_path}")
+            self.assertIn(invalid_link.exception.code, (400, 404), "invalid public link is rejected with a client error")
+            error_message = invalid_link.exception.read().decode()
+            self.assertRegex(error_message, r"(?i)(not found|error|nie znaleziono|blad)", "invalid public link explains the failure")
         finally:
             process.terminate()
             process.wait(timeout=3)
 
         process = start_app(port)
         driver_process = None
+        second_driver_process = None
         try:
             with urlopen(f"http://127.0.0.1:{port}/api/catalog") as response:
                 changed_catalog = json.load(response)
-            for product in changed_catalog["products"]:
-                if product["model"] == "ryzen-5-7600":
-                    product["price"] += 100
-                    break
-            changed_catalog["products"].append(
+            changed_products = [
+                {
+                    "id": product["model"],
+                    "model": product["model"],
+                    "name": product["name"],
+                    "price": product["price"] + (100 if product["model"] == "ryzen-5-7600" else 0),
+                }
+                for product in changed_catalog["products"]
+            ]
+            changed_products.append(
                 {
                     "id": "independent-cpu-offer",
                     "model": "core-i5-14600k",
@@ -2812,9 +2841,39 @@ class BuilderSmokeTest(unittest.TestCase):
             changed_import_status, _ = request(
                 port,
                 "/api/import",
-                {"products": changed_catalog["products"]},
+                {"products": changed_products},
             )
             self.assertEqual(changed_import_status, 200, "catalog price can change after saving and before opening")
+            current_status, current_build = request(port, "/api/build", payload)
+            self.assertEqual(current_status, 200, "the changed current catalog remains usable")
+            self.assertNotEqual(current_build.get("total"), saved_total, "the current catalog differs from the saved snapshot")
+            with urlopen(f"http://127.0.0.1:{port}{share_path}") as response:
+                shared_build_after_restart = json.load(response)
+            self.assertEqual(
+                shared_build_after_restart.get("selections"),
+                selections,
+                "public link restores every selected part in a new application session",
+            )
+            self.assertEqual(
+                shared_build_after_restart.get("purpose"),
+                "programming",
+                "public link restores the purpose in a new application session",
+            )
+            self.assertEqual(
+                shared_build_after_restart.get("budget", {}).get("limit"),
+                7000,
+                "public link restores the budget in a new application session",
+            )
+            self.assertEqual(
+                shared_build_after_restart.get("total"),
+                saved_total,
+                "public link restores the saved total in a new application session",
+            )
+            self.assertEqual(
+                shared_build_after_restart.get("analysis"),
+                saved_build.get("analysis"),
+                "public link restores the saved analysis in a new application session",
+            )
             with urlopen(f"http://127.0.0.1:{port}/") as response:
                 page = response.read().decode()
             self.assertIn("id='save'", page, "configurator exposes an action for saving the current build")
@@ -2823,9 +2882,13 @@ class BuilderSmokeTest(unittest.TestCase):
             self.assertIn("/api/open", page, "open action is wired to the public open endpoint")
             self.assertIn("id='save-status'", page, "configurator exposes the result of restoring a saved build")
 
+            changed_import_status, _ = request(port, "/api/import", {"products": changed_products})
+            self.assertEqual(changed_import_status, 200, "the current catalog changes before the public link is opened")
+
             with socket() as listener:
                 listener.bind(("127.0.0.1", 0))
                 self.webdriver_port = listener.getsockname()[1]
+            first_webdriver_port = self.webdriver_port
             driver_process = subprocess.Popen(
                 ["geckodriver", "--port", str(self.webdriver_port)],
                 stdout=subprocess.DEVNULL,
@@ -2881,16 +2944,22 @@ class BuilderSmokeTest(unittest.TestCase):
             self.assertIn(f"{saved_total} PLN", restored_ui["total"], "open action renders the restored current total")
             self.assertTrue(restored_ui["products"], "open action renders the restored build products")
 
+            changed_import_status, _ = request(port, "/api/import", {"products": changed_products})
+            self.assertEqual(changed_import_status, 200, "the current catalog changes after opening the saved build")
+
             self.webdriver(
                 "POST",
                 f"{base}/execute/sync",
                 {
                     "script": """
                         window.__saveBodies = [];
+                        window.__saveResults = [];
                         const previousFetch = window.fetch;
                         window.fetch = async (...args) => {
                             if (args[0] === '/api/save') window.__saveBodies.push(JSON.parse(args[1].body));
-                            return previousFetch(...args);
+                            const response = await previousFetch(...args);
+                            if (args[0] === '/api/save') window.__saveResults.push(await response.clone().json());
+                            return response;
                         };
                     """,
                     "args": [],
@@ -2911,6 +2980,78 @@ class BuilderSmokeTest(unittest.TestCase):
                 "POST", f"{base}/execute/sync", {"script": "return window.__saveBodies[0]", "args": []}
             )["value"]
             self.assertEqual(saved_ui_payload, payload, "save action sends the complete current build to the public endpoint")
+            saved_ui_result = self.webdriver(
+                "POST", f"{base}/execute/sync", {"script": "return window.__saveResults[0]", "args": []}
+            )["value"]
+            self.assertTrue(saved_ui_result.get("save_id"), "save action receives the new saved-build identifier")
+            self.assertNotEqual(saved_ui_result["save_id"], save_id, "saving the changed build creates a new saved-build identifier")
+            current_save_id = saved_ui_result["save_id"]
+
+            share_control = self.webdriver(
+                "POST", f"{base}/execute/sync", {"script": "return !!document.querySelector('#share')", "args": []}
+            )["value"]
+            self.assertTrue(share_control, "configurator exposes an action for creating a public share link")
+            self.webdriver(
+                "POST",
+                f"{base}/execute/sync",
+                {"script": "document.querySelector('#save-id').value = arguments[0]", "args": [save_id]},
+            )
+            self.webdriver("POST", f"{base}/execute/sync", {"script": "document.querySelector('#share').click()", "args": []})
+            for _ in range(20):
+                share_link = self.webdriver(
+                    "POST",
+                    f"{base}/execute/sync",
+                    {"script": "return document.querySelector('#share-link')?.href || ''", "args": []},
+                )["value"]
+                if share_link:
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail("sharing a saved build did not render a public link")
+            self.assertIn(f"/share/{save_id}", share_link, "share action renders the build selected in the save-id field")
+
+            with socket() as listener:
+                listener.bind(("127.0.0.1", 0))
+                second_webdriver_port = listener.getsockname()[1]
+            second_driver_process = subprocess.Popen(
+                ["geckodriver", "--port", str(second_webdriver_port)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            for _ in range(20):
+                try:
+                    with urlopen(f"http://127.0.0.1:{second_webdriver_port}/status", timeout=0.2):
+                        break
+                except OSError:
+                    time.sleep(0.1)
+            else:
+                self.skipTest("second geckodriver is unavailable")
+            self.webdriver_port = second_webdriver_port
+            second_session = self.webdriver(
+                "POST", "/session", {"capabilities": {"alwaysMatch": {"browserName": "firefox"}}}
+            )
+            second_session_id = second_session["value"]["sessionId"]
+            second_base = f"/session/{second_session_id}"
+            self.webdriver("POST", f"{second_base}/url", {"url": share_link})
+            for _ in range(20):
+                shared_page = self.webdriver(
+                    "POST",
+                    f"{second_base}/execute/sync",
+                    {
+                        "script": "return {selectors: [...document.querySelectorAll('#selectors select')].map(select => [select.id, select.value]), purpose: document.querySelector('#purpose')?.value || '', budget: document.querySelector('#budget')?.value || '', total: document.querySelector('#total')?.textContent || '', summary: document.querySelector('.summary')?.textContent || ''}",
+                        "args": [],
+                    },
+                )["value"]
+                if len(shared_page["selectors"]) == len(selections) and shared_page["total"]:
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail(f"public share link did not render the configurator: {shared_page!r}")
+            self.assertEqual(dict(shared_page["selectors"]), selections, "public link restores selected parts in a new browser session")
+            self.assertEqual(shared_page["purpose"], "programming", "public link restores purpose in the configurator")
+            self.assertEqual(shared_page["budget"], "7000", "public link restores budget in the configurator")
+            self.assertIn(f"{saved_total} PLN", shared_page["total"], "public link renders the total for the build selected in the save-id field")
+            self.assertIn("Bilans:", shared_page["summary"], "public link renders the build analysis summary")
 
             open_status, opened = request(port, "/api/open", {"save_id": save_id})
             self.assertEqual(open_status, 200, "saved build can be opened after restart")
@@ -2942,6 +3083,16 @@ class BuilderSmokeTest(unittest.TestCase):
                     self.webdriver("DELETE", f"/session/{session_id}")
                 except OSError:
                     pass
+            if "second_session_id" in locals():
+                try:
+                    self.webdriver("DELETE", f"/session/{second_session_id}")
+                except OSError:
+                    pass
+            if second_driver_process is not None:
+                second_driver_process.terminate()
+                second_driver_process.wait(timeout=3)
+            if "first_webdriver_port" in locals():
+                self.webdriver_port = first_webdriver_port
             if driver_process is not None:
                 driver_process.terminate()
                 driver_process.wait(timeout=3)
