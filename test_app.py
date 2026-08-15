@@ -236,10 +236,10 @@ class BuilderSmokeTest(unittest.TestCase):
                     "args": [],
                 },
             )["value"]
-            self.assertEqual(
-                filtered_catalog,
-                ["gpu - rtx-4070 - 2399 PLN GeForce RTX 4070 - 2399 PLN prepared-shop"],
-                "catalog shows only the GPU matching the name fragment",
+            self.assertEqual(len(filtered_catalog), 1, "catalog shows only the GPU matching the name fragment")
+            self.assertTrue(
+                filtered_catalog[0].startswith("gpu - rtx-4070 - 2399 PLN GeForce RTX 4070 - 2399 PLN prepared-shop"),
+                "catalog shows the matching GPU details",
             )
             self.webdriver("POST", f"{base}/execute/sync", {"script": "document.querySelector('#import').click()", "args": []})
             for _ in range(20):
@@ -261,10 +261,10 @@ class BuilderSmokeTest(unittest.TestCase):
                     "args": [],
                 },
             )["value"]
-            self.assertEqual(
-                refreshed_filtered_catalog,
-                ["gpu - rtx-4070 - 2399 PLN GeForce RTX 4070 - 2399 PLN prepared-shop"],
-                "catalog refresh preserves active search and type filters",
+            self.assertEqual(len(refreshed_filtered_catalog), 1, "catalog refresh preserves active search and type filters")
+            self.assertTrue(
+                refreshed_filtered_catalog[0].startswith("gpu - rtx-4070 - 2399 PLN GeForce RTX 4070 - 2399 PLN prepared-shop"),
+                "catalog refresh preserves the matching GPU details",
             )
             self.webdriver("POST", f"{base}/execute/sync", {"script": "window.fetch = async () => new Response(JSON.stringify({error: 'bad response'}), {status: 400}); document.querySelector('#import').click()", "args": []})
             for _ in range(20):
@@ -719,6 +719,120 @@ class BuilderSmokeTest(unittest.TestCase):
                 [("x-kom", 749, True), ("prepared-shop", 749, True)],
                 "refresh updates price and check time for every offer without changing its source",
             )
+            self.assertEqual(refreshed_product.get("last_price"), 749, "public product data exposes the latest measured price")
+            self.assertEqual(refreshed_product.get("previous_price"), 829, "public product data preserves the prior catalog price")
+            self.assertRegex(refreshed_product.get("last_checked", ""), r"T\S+", "latest measurement exposes its check date")
+            self.assertRegex(refreshed_product.get("previous_checked", ""), r"T\S+", "previous measurement exposes its check date")
+            self.assertIn(refreshed_product["last_checked"], refreshed, "catalog shows the latest measurement date")
+            self.assertIn(refreshed_product["previous_checked"], refreshed, "catalog shows the previous measurement date")
+            self.assertEqual(refreshed_product.get("price_direction"), "down", "public product data communicates a price decrease")
+            self.assertIn("829 PLN", refreshed, "catalog keeps the previous measured price visible")
+            self.assertIn("Cena spadla", refreshed, "catalog explains the price direction")
+            first_last_checked = refreshed_product["last_checked"]
+            time.sleep(1.1)
+            self.webdriver(
+                "POST",
+                f"{base}/execute/sync",
+                {"script": "document.querySelector('#catalog-products li button').click()", "args": []},
+            )
+            for _ in range(20):
+                second_product = self.webdriver(
+                    "POST",
+                    f"{base}/execute/sync",
+                    {"script": "return window.__refreshProducts[1] || null", "args": []},
+                )["value"]
+                if second_product:
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail("second successful refresh did not produce public product data")
+            for _ in range(20):
+                second_refreshed = self.webdriver(
+                    "POST",
+                    f"{base}/execute/sync",
+                    {"script": "return document.querySelector('#catalog-products li').textContent", "args": []},
+                )["value"]
+                if second_product.get("last_checked") in second_refreshed:
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail(f"later refresh date did not render: {second_refreshed}")
+            self.assertEqual(second_product.get("last_price"), 749, "a later refresh updates the latest measurement")
+            self.assertEqual(second_product.get("previous_price"), 749, "a later refresh moves the former latest measurement to previous")
+            self.assertRegex(second_product.get("last_checked", ""), r"T\S+", "later refresh keeps a latest measurement date")
+            self.assertRegex(second_product.get("previous_checked", ""), r"T\S+", "later refresh keeps a previous measurement date")
+            self.assertEqual(
+                second_product.get("previous_checked"),
+                first_last_checked,
+                "a later refresh preserves the first measurement date as previous",
+            )
+            self.assertNotEqual(
+                second_product.get("last_checked"),
+                first_last_checked,
+                "a later refresh records a new latest measurement date",
+            )
+            self.assertIn(second_product["last_checked"], second_refreshed, "catalog shows the later measurement date")
+            self.assertIn(second_product["previous_checked"], second_refreshed, "catalog shows the shifted previous date")
+            self.assertEqual(second_product.get("price_direction"), "unchanged", "equal consecutive prices are reported as unchanged")
+            self.assertIn("Cena bez zmian", second_refreshed, "catalog explains an unchanged price")
+            self.webdriver(
+                "POST",
+                f"{base}/execute/sync",
+                {
+                    "script": """
+                        fetch('/api/import', {
+                          method: 'POST',
+                          headers: {'Content-Type': 'application/json'},
+                          body: JSON.stringify({products: [
+                            {id: 'growth-offer', model: 'core-i5-14600k', name: 'Intel Core i5-14600K', price: 1000, source: 'x-kom'}
+                          ]})
+                        }).then(() => refreshCatalog());
+                    """,
+                    "args": [],
+                },
+            )
+            for _ in range(20):
+                growth_before = self.webdriver(
+                    "POST",
+                    f"{base}/execute/sync",
+                    {"script": "return document.querySelector('#catalog-products').textContent", "args": []},
+                )["value"]
+                if "core-i5-14600k" in growth_before and "1000 PLN" in growth_before:
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail(f"growth scenario import did not render: {growth_before}")
+            self.webdriver(
+                "POST",
+                f"{base}/execute/sync",
+                {"script": "document.querySelector('#catalog-products li button').click()", "args": []},
+            )
+            for _ in range(20):
+                growth_product = self.webdriver(
+                    "POST",
+                    f"{base}/execute/sync",
+                    {"script": "return window.__refreshProducts[2] || null", "args": []},
+                )["value"]
+                if growth_product:
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail("price increase refresh did not produce public product data")
+            growth_refreshed = self.webdriver(
+                "POST",
+                f"{base}/execute/sync",
+                {"script": "return document.querySelector('#catalog-products li').textContent", "args": []},
+            )["value"]
+            self.assertEqual(growth_product.get("last_price"), 1199, "public product data exposes the increased latest price")
+            self.assertEqual(growth_product.get("previous_price"), 1000, "public product data preserves the lower prior price")
+            self.assertRegex(growth_product.get("last_checked", ""), r"T\S+", "increased measurement exposes its check date")
+            self.assertRegex(growth_product.get("previous_checked", ""), r"T\S+", "lower measurement exposes its check date")
+            self.assertIn(growth_product["last_checked"], growth_refreshed, "catalog shows the increased measurement date")
+            self.assertIn(growth_product["previous_checked"], growth_refreshed, "catalog shows the lower measurement date")
+            self.assertEqual(growth_product.get("price_direction"), "up", "public product data communicates a price increase")
+            self.assertIn("1199 PLN", growth_refreshed, "catalog shows the increased price")
+            self.assertIn("1000 PLN", growth_refreshed, "catalog keeps the lower measured price visible")
+            self.assertIn("Cena wzrosla", growth_refreshed, "catalog explains the price increase")
         finally:
             if 'session_id' in locals():
                 try:

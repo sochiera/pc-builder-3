@@ -481,6 +481,7 @@ def catalog_products(products: list[dict]) -> list[dict]:
     """Expose one buyer-facing item per imported, recognized product."""
     catalog = []
     type_indexes = {}
+    imported_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     for product in products:
         offers = product.get("offers")
         component_type = component_type_for(product.get("id"))
@@ -488,18 +489,30 @@ def catalog_products(products: list[dict]) -> list[dict]:
         if not priced_offers or component_type is None:
             continue
         type_indexes[component_type] = type_indexes.get(component_type, 0) + 1
+        latest_offer = priced_offers[-1]
         catalog_product = {
             "id": f"{component_type}-{type_indexes[component_type]}",
             "type": component_type,
             "model": product["id"],
             "name": product["name"],
-            "price": priced_offers[-1]["price"],
+            "price": latest_offer["price"],
             "offers": priced_offers,
+            "last_price": latest_offer["price"],
+            "last_checked": imported_at,
+            "price_direction": "unchanged",
         }
         if "key_parameter" in product:
             catalog_product["key_parameter"] = product["key_parameter"]
         catalog.append(catalog_product)
     return catalog
+
+
+def price_direction(current: int | float, previous: int | float) -> str:
+    if current > previous:
+        return "up"
+    if current < previous:
+        return "down"
+    return "unchanged"
 
 
 def refresh_product(product_id: str) -> dict:
@@ -511,10 +524,16 @@ def refresh_product(product_id: str) -> dict:
         raise ValueError("unsupported product")
     checked_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     refreshed_price = REFRESHED_PRICES[product_id]
+    previous_price = product.get("last_price", product["price"])
+    previous_checked = product.get("last_checked", checked_at)
+    product["previous_price"] = previous_price
+    product["previous_checked"] = previous_checked
+    product["price_direction"] = price_direction(refreshed_price, previous_price)
     for offer in product["offers"]:
         offer["price"] = refreshed_price
         offer["checked_at"] = checked_at
     product["price"] = refreshed_price
+    product["last_price"] = refreshed_price
     product["last_checked"] = checked_at
     return product
 
@@ -1195,9 +1214,17 @@ PAGE = """<!doctype html>
             } else {
               item.append(details, document.createTextNode(offer.source));
             }
-          });
+            });
           if (product.last_checked) {
             item.append(document.createTextNode(` Sprawdzono: ${product.last_checked}`));
+          }
+          if (product.previous_checked) {
+            const directionLabels = { up: 'Cena wzrosla', down: 'Cena spadla', unchanged: 'Cena bez zmian' };
+            item.append(document.createTextNode(
+              ` Ostatnia cena: ${product.last_price} PLN (${product.last_checked})` +
+              ` | Poprzednia cena: ${product.previous_price} PLN (${product.previous_checked})` +
+              ` | ${directionLabels[product.price_direction] || 'Kierunek ceny nieznany'}`,
+            ));
           }
          list.append(item);
        });
