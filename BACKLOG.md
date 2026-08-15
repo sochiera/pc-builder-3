@@ -205,7 +205,7 @@ Jako kupujacy chce zapisac aktualny zestaw i ponownie go otworzyc, zeby nie utra
 - Sprawdzenie: zapisz przygotowany zestaw, zamknij i ponownie uruchom aplikacje, a nastepnie otworz go i sprawdz czesci, budzet oraz przeznaczenie.
 - Poza zakresem: konta, synchronizacja miedzy urzadzeniami i wersjonowanie zapisu.
 
-## US-021 — Uzytkownik udostepnia konfiguracje [do weryfikacji]
+## US-021 — Uzytkownik udostepnia konfiguracje [zrobiona]
 
 Jako kupujacy chce utworzyc link do zapisanego zestawu, zeby druga osoba mogla go otworzyc bez dostepu do mojego urzadzenia.
 
